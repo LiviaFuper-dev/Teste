@@ -18,6 +18,10 @@ GUILD_ID = 1407051681421594806
 CANAL_ID = 1463886633999794218
 TARGET_USER_ID = 287745016003035137
 
+# Usuário que PERMANECE no tópico após !contato (além do próprio bot)
+KEEPER_USER_ID = 287745016003035137
+KEEPER_ROLE_ID = 1415390806541598831  # Cargo de segurança para não expulsar por engano
+
 THREAD_AUTO_ARCHIVE_MINUTES = 1440
 
 N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL")
@@ -25,12 +29,34 @@ N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL")
 # ======================================================
 # MENSAGEM DE INATIVIDADE (edite aqui)
 # ======================================================
-INACTIVITY_TIMEOUT_SECONDS = 43200
+INACTIVITY_TIMEOUT_SECONDS = 86400  # 24 horas
 INACTIVITY_MESSAGE = (
-    "⏳ **Olá! Notamos que não houve atividade neste tópico nos últimos 30 segundos.**\n\n"
-    "Caso ainda precise de ajuda, basta enviar uma mensagem aqui.\n"
-    "Se o assunto já foi resolvido, utilize o comando `!contato` para encerrar este tópico. ✅"
+    "Eii! Atualização sobre a sua busca: :hourglass:\n\n"
+    "O sistema ainda está rodando a varredura para localizar os contatos desse cliente.\n\n"
+    "**Por que isso acontece?** Alguns clientes possuem cadastros muito desatualizados ou difíceis de cruzar nas bases públicas. "
+    "Para não te entregar um número errado e fazer você perder tempo ligando para terceiros, nossos algoritmos estão aprofundando "
+    "a busca em fontes alternativas.\n\n"
+    "**O que fazer agora?** Pode focar nas suas outras demandas, não precisa se preocupar ou abrir um novo chamado. "
+    "O robô continua trabalhando nesse caso em segundo plano. Assim que batermos o contato quente dele, te avisamos aqui na hora! "
+    ":scales: :rocket:"
 )
+
+# ======================================================
+# MENSAGEM DE CONCLUSÃO (enviada pelo !contato)
+# ======================================================
+CONTATO_CONCLUSAO_MESSAGE = (
+    "Opa! Busca concluída com sucesso. :white_check_mark:\n\n"
+    "Fizemos uma varredura completa e conseguimos extrair **TODOS** os números de telefone possíveis desse cliente. "
+    "O dossiê de contatos tá na sua mão!\n\n"
+    "Agora é com você: bora iniciar as tentativas, cobrar os documentos e dar andamento nesse processo para ganharmos logo esse caso. :scales:\n\n"
+    "Para facilitar a sua vida, lembre que todos os números resgatados ficam salvos e disponíveis 24h por dia neste link: :point_down:\n\n"
+    "https://app.clickup.com/9011605202/v/li/901112971241\n\n"
+    "Bom trabalho e vamos pra cima! :rocket:"
+)
+
+# Tempo de espera antes de fechar o tópico após !contato (12 horas em segundos)
+CONTATO_CLOSE_DELAY_SECONDS = 43200
+
 # ======================================================
 
 intents = discord.Intents.default()
@@ -59,9 +85,7 @@ CPF_REGEX = re.compile(r"^\d{3}\.\d{3}\.\d{3}-\d{2}$")
 def validar_formato_cpf(cpf: str) -> bool:
     """
     Valida o formato do CPF.
-
-    Aceita apenas o padrão:
-    xxx.xxx.xxx-xx
+    Aceita apenas o padrão: xxx.xxx.xxx-xx
     """
     return bool(CPF_REGEX.match(cpf))
 
@@ -69,13 +93,6 @@ def validar_formato_cpf(cpf: str) -> bool:
 # ENVIO N8N
 # ================================
 async def enviar_para_n8n(payload: dict) -> dict:
-    """
-    Envia os dados do contato para o webhook do n8n e retorna um dict com o resultado.
-    Retorno exemplo:
-      { "status": 200, "ok": True, "json": {...} }
-      { "status": 500, "ok": False, "text": "erro..." }
-      { "status": None, "ok": False, "error": "timeout" }
-    """
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
@@ -163,10 +180,10 @@ class ContatoView(discord.ui.View):
 
 # ================================
 # TASK: VERIFICAÇÃO DE INATIVIDADE
-# Roda a cada 10 segundos e verifica
+# Roda a cada 60 segundos e verifica
 # quais threads ultrapassaram o timeout
 # ================================
-@tasks.loop(seconds=10)
+@tasks.loop(seconds=60)
 async def verificar_inatividade():
     agora = datetime.datetime.utcnow()
     threads_para_remover = []
@@ -180,19 +197,42 @@ async def verificar_inatividade():
 
             thread = guild.get_thread(thread_id)
             if thread is None:
-                # Thread não existe mais, remove do controle
                 threads_para_remover.append(thread_id)
                 continue
 
             try:
                 await thread.send(INACTIVITY_MESSAGE)
-                # Reseta o timer: próximo alerta virá após mais INACTIVITY_TIMEOUT_SECONDS de inatividade
+                # Reseta o timer para não spammar a mesma mensagem
                 THREAD_ACTIVITY[thread_id]["last_activity"] = datetime.datetime.utcnow()
             except Exception as e:
                 print(f"[INATIVIDADE] Erro ao enviar mensagem na thread {thread_id}: {e}")
 
     for tid in threads_para_remover:
         THREAD_ACTIVITY.pop(tid, None)
+
+# ================================
+# FECHAR TÓPICO APÓS DELAY
+# Chamado após o comando !contato
+# ================================
+async def fechar_topico_apos_delay(thread: discord.Thread):
+    """Aguarda CONTATO_CLOSE_DELAY_SECONDS e então fecha (deleta) o tópico."""
+    await asyncio.sleep(CONTATO_CLOSE_DELAY_SECONDS)
+
+    # Verifica se o tópico ainda existe antes de tentar deletar
+    try:
+        # Tenta buscar o tópico atualizado para confirmar que ainda existe
+        guild = bot.get_guild(GUILD_ID)
+        if guild:
+            t = guild.get_thread(thread.id)
+            if t is None:
+                print(f"[AUTO-CLOSE] Tópico {thread.id} já foi deletado, nada a fazer.")
+                return
+        await thread.delete()
+        print(f"[AUTO-CLOSE] Tópico {thread.id} fechado automaticamente após {CONTATO_CLOSE_DELAY_SECONDS}s.")
+    except discord.NotFound:
+        print(f"[AUTO-CLOSE] Tópico {thread.id} não encontrado (já deletado).")
+    except Exception as e:
+        print(f"[AUTO-CLOSE] Erro ao fechar tópico {thread.id}: {e}")
 
 # ================================
 # LÓGICA PRINCIPAL
@@ -254,7 +294,7 @@ async def criar_thread_contato(
     existe = resp.get("ok") and resp.get("json", {}).get("existe", False)
 
     if existe:
-        THREAD_ACTIVITY.pop(thread.id, None)  # Remove do controle
+        THREAD_ACTIVITY.pop(thread.id, None)
 
         try:
             await thread.delete()
@@ -292,23 +332,22 @@ async def criar_thread_contato(
 # ================================
 # EVENTO: MENSAGEM ENVIADA
 # Atualiza o timestamp de atividade
-# e reseta o alerta da thread
 # ================================
 @bot.event
 async def on_message(message: discord.Message):
-    # Ignora mensagens do próprio bot
     if message.author == bot.user:
         return
 
-    # Atualiza atividade se for uma thread monitorada
     if message.channel.id in THREAD_ACTIVITY:
         THREAD_ACTIVITY[message.channel.id]["last_activity"] = datetime.datetime.utcnow()
 
-    # Necessário para os comandos continuarem funcionando
     await bot.process_commands(message)
 
 # ================================
 # COMANDO !contato
+# 1. Remove todos do tópico exceto bot e KEEPER_USER_ID
+# 2. Envia mensagem de conclusão
+# 3. Aguarda 12h e fecha o tópico
 # ================================
 @bot.command(name="contato")
 async def contato_cmd(ctx: commands.Context):
@@ -351,21 +390,32 @@ async def contato_cmd(ctx: commands.Context):
                 pass
         return
 
-    # Remove do controle de inatividade ao fechar
+    # ── 1. Remove do controle de inatividade ──────────────────────────────────
     THREAD_ACTIVITY.pop(channel.id, None)
 
-    for member in list(channel.members):
+    # ── 2. Remove apenas o TARGET_USER_ID do tópico ───────────────────────────
+    # (Iterar channel.members em threads privadas retorna ThreadMember,
+    #  que não possui .roles — checagem de cargo não funciona nesse contexto.
+    #  A abordagem segura é remover apenas quem foi adicionado explicitamente.)
+    guild = ctx.guild
+    if guild:
         try:
-            if member == ctx.guild.me:
-                continue
-            await channel.remove_user(member)
+            target = guild.get_member(TARGET_USER_ID) or await guild.fetch_member(TARGET_USER_ID)
+            if target:
+                await channel.remove_user(target)
+                print(f"[!contato] Membro {TARGET_USER_ID} removido do tópico {channel.id}.")
         except Exception as e:
-            print(f"[WARN] não foi possível remover {member}: {e}")
+            print(f"[WARN] não foi possível remover TARGET_USER do tópico: {e}")
 
+    # ── 3. Envia a mensagem de conclusão ──────────────────────────────────────
     try:
-        await channel.delete()
+        await channel.send(CONTATO_CONCLUSAO_MESSAGE)
     except Exception as e:
-        print(f"[ERROR] falha ao deletar thread {channel.id}: {e}")
+        print(f"[ERROR] falha ao enviar mensagem de conclusão no tópico {channel.id}: {e}")
+
+    # ── 4. Agenda o fechamento após 12 horas ──────────────────────────────────
+    print(f"[!contato] Tópico {channel.id} será fechado em {CONTATO_CLOSE_DELAY_SECONDS}s (12h).")
+    asyncio.create_task(fechar_topico_apos_delay(channel))
 
 # ================================
 # ON READY
@@ -374,8 +424,8 @@ async def contato_cmd(ctx: commands.Context):
 async def on_ready():
     print(f"✅ Bot conectado como {bot.user}")
 
-    verificar_inatividade.start()  # Inicia a task de inatividade
-    print(f"⏱️  Task de inatividade iniciada (timeout: {INACTIVITY_TIMEOUT_SECONDS}s)")
+    verificar_inatividade.start()
+    print(f"⏱️  Task de inatividade iniciada (timeout: {INACTIVITY_TIMEOUT_SECONDS}s / 24h)")
 
     guild = bot.get_guild(GUILD_ID)
     if not guild:
