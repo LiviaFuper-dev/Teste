@@ -589,9 +589,10 @@ class ProblemTypeView(discord.ui.View):
 # ── ServiceModal ──────────────────────────────────────────────────────────────
 
 class ServiceModal(discord.ui.Modal):
-    def __init__(self, sistema: str):
+    def __init__(self, sistema: str, original_interaction: discord.Interaction = None):
         super().__init__(title=f"Suporte - {sistema}")
         self.sistema = sistema
+        self.original_interaction = original_interaction
         self.descricao = discord.ui.TextInput(
             label=f"Qual problema você está tendo no {sistema}?",
             style=discord.TextStyle.paragraph,
@@ -602,11 +603,16 @@ class ServiceModal(discord.ui.Modal):
         self.add_item(self.descricao)
 
     async def on_submit(self, interaction: discord.Interaction):
-        await _handle_modal_submit(interaction, self.sistema, self.descricao.value)
+        await _handle_modal_submit(
+            interaction, self.sistema, self.descricao.value, self.original_interaction
+        )
 
 
 async def _handle_modal_submit(
-    interaction: discord.Interaction, sistema: str, descricao: str
+    interaction: discord.Interaction,
+    sistema: str,
+    descricao: str,
+    original_interaction: discord.Interaction = None,
 ) -> None:
     await interaction.response.defer(ephemeral=True)
     guild = interaction.guild
@@ -690,7 +696,13 @@ async def _handle_modal_submit(
     }
     print(f"[SISTEMAS] Payload pendente salvo: thread {thread.id}")
 
-    await interaction.followup.send("Tópico criado! Acesse-o para continuar.", ephemeral=True)
+    # Apaga o ephemeral do menu após 3s (mesmo padrão do módulo TI)
+    if original_interaction:
+        await asyncio.sleep(3)
+        try:
+            await original_interaction.delete_original_response()
+        except Exception:
+            pass
 
 
 # ── ServicesView (ephemeral no menu principal) ────────────────────────────────
@@ -703,15 +715,15 @@ class ServicesView(discord.ui.View):
 
     @discord.ui.button(label="💬ChatGuru💬", style=discord.ButtonStyle.success, custom_id="sistemas_btn_chatguru")
     async def chatguru(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(ServiceModal("ChatGuru"))
+        await interaction.response.send_modal(ServiceModal("ChatGuru", original_interaction=interaction))
 
     @discord.ui.button(label="⚖️Whom⚖️", style=discord.ButtonStyle.primary, custom_id="sistemas_btn_whom")
     async def whom(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(ServiceModal("Whom"))
+        await interaction.response.send_modal(ServiceModal("Whom", original_interaction=interaction))
 
     @discord.ui.button(label="⚙️Clickup⚙️", style=discord.ButtonStyle.danger, custom_id="sistemas_btn_clickup")
     async def clickup(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(ServiceModal("Clickup"))
+        await interaction.response.send_modal(ServiceModal("Clickup", original_interaction=interaction))
 
 
 # ── SectorSelectView ──────────────────────────────────────────────────────────
@@ -871,3 +883,4 @@ def setup(bot: commands.Bot) -> None:
                 "Nenhum payload pendente para este tópico (já enviado?).",
                 mention_author=False,
             )
+            
