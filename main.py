@@ -46,7 +46,7 @@ class MainMenuView(discord.ui.View):
         ))
 
     @discord.ui.button(
-        label="1 - T.I. 🖥️",
+        label="1 - Equipamentos 🖥️",
         style=discord.ButtonStyle.danger,
         custom_id="menu_btn_ti",
         row=0,
@@ -99,7 +99,7 @@ def _build_menu_embed() -> discord.Embed:
         title="📋 Central de Atendimento",
         description=(
             "Bem-vindo! Selecione abaixo a área correspondente à sua necessidade.\n\n"
-            "🖥️ **T.I.** — Problemas técnicos com hardware, rede ou equipamentos\n"
+            "🖥️ **Equipamentos** — Problemas técnicos com hardware, rede ou equipamentos\n"
             "📞 **Contato** — Recuperação de telefone\n"
             # "⚙️ **Sistemas** — ChatGuru, Whom, ClickUp\n"
             # "📈 **SDR** — Formulário SDR\n"
