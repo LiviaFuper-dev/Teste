@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+# caveira-sistemas.py
 import os
 import io
 import asyncio
@@ -36,7 +36,7 @@ WHOM_ROLE_ID = 1474430877827203165
 CLICKUP_SUPPORT_ROLE_ID = 1474431104046989312
 
 # URL do webhook n8n
-N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL")
+N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL_SIS")
 PENDING_PAYLOADS = {} 
 # arquivo JSON com soluções (coloque solutions.json no mesmo diretório)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))

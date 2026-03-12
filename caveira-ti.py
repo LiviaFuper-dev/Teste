@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+# caveira-ti.py
 import os
 import io
 import asyncio
@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 import requests
 
 load_dotenv()
-N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL")
+N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL_TI")
 
 def webPost(payload: dict):
     """

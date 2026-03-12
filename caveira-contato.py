@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+# caveira-contato.py
 import os
 import datetime
 import discord
@@ -24,7 +24,7 @@ KEEPER_ROLE_ID = 1415390806541598831  # Cargo de segurança para não expulsar p
 
 THREAD_AUTO_ARCHIVE_MINUTES = 1440
 
-N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL")
+N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL_CONT")
 
 # ======================================================
 # MENSAGEM DE INATIVIDADE (edite aqui)
