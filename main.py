@@ -16,6 +16,7 @@ from discord.ext import commands
 import config
 from modules import ti as ti_module
 from modules import contato as contato_module
+from modules import sistemas as sistemas_module
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Bot
@@ -34,15 +35,16 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # ─────────────────────────────────────────────────────────────────────────────
 
 class MainMenuView(discord.ui.View):
-    """
-    View fixada no canal unificado.
-    Cada botão abre o fluxo do módulo correspondente via ephemeral.
-    """
-
     def __init__(self):
         super().__init__(timeout=None)
+        # Botão de link OBRIGATORIAMENTE vai aqui, não como decorator
+        self.add_item(discord.ui.Button(
+            label="📋 Solicitação de Reembolso 📋",
+            style=discord.ButtonStyle.primary,
+            url=config.SDR_FORM_URL,
+            row=1,
+        ))
 
-    # ── Botão T.I. ────────────────────────────────────────────────────────────
     @discord.ui.button(
         label="1 - T.I. 🖥️",
         style=discord.ButtonStyle.danger,
@@ -66,7 +68,6 @@ class MainMenuView(discord.ui.View):
             ephemeral=True,
         )
 
-    # ── Botão Contato ─────────────────────────────────────────────────────────
     @discord.ui.button(
         label="2 - Recuperar Telefone 📞",
         style=discord.ButtonStyle.success,
@@ -77,21 +78,19 @@ class MainMenuView(discord.ui.View):
         await interaction.response.send_modal(
             contato_module.ContatoModal()
         )
-
-    # ── Próximos módulos ──────────────────────────────────────────────────────
-    # @discord.ui.button(label="3 - Sistemas ⚙️", style=discord.ButtonStyle.primary,
-    #                    custom_id="menu_btn_sistemas", row=0)
-    # async def sistemas_button(self, interaction, button):
-    #     await interaction.response.send_message(
-    #         "Selecione o sistema:", view=sistemas_module.ServicesView(interaction), ephemeral=True
-    #     )
-
-    # @discord.ui.button(label="4 - SDR 📈", style=discord.ButtonStyle.secondary,
-    #                    custom_id="menu_btn_sdr", row=1)
-    # async def sdr_button(self, interaction, button):
-    #     await interaction.response.send_message(
-    #         f"Acesse o formulário SDR: {config.SDR_FORM_URL}", ephemeral=True
-    #     )
+    
+    @discord.ui.button(
+        label="3 - Sistemas ⚙️",
+        style=discord.ButtonStyle.primary,
+        custom_id="menu_btn_sistemas",
+        row=0,
+    )
+    async def sistemas_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            "Selecione o sistema com problema:",
+            view=sistemas_module.ServicesView(),
+            ephemeral=True,
+        )
 
 
 def _build_menu_embed() -> discord.Embed:
@@ -121,8 +120,7 @@ def setup_modules() -> None:
     """
     ti_module.setup(bot)
     contato_module.setup(bot)
-    # sistemas_module.setup(bot)  ← descomente ao adicionar
-    # sdr_module.setup(bot)       ← descomente ao adicionar
+    sistemas_module.setup(bot)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -136,7 +134,7 @@ async def on_ready():
     # Registra views persistentes (botões funcionam após reinício)
     bot.add_view(MainMenuView())
     bot.add_view(ti_module.UrgenciaView())
-    # bot.add_view(sistemas_module.ServicesView())  ← descomente ao adicionar
+    bot.add_view(sistemas_module.ServicesView()) 
 
     # Inicia tasks que precisam do event loop (só aqui, nunca em setup_modules)
     contato_module.start_tasks()
