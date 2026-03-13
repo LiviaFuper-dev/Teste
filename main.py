@@ -35,18 +35,24 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # ─────────────────────────────────────────────────────────────────────────────
 
 class MainMenuView(discord.ui.View):
+    """
+    View fixada no canal unificado.
+    Cada botão abre o fluxo do módulo correspondente via ephemeral.
+    """
+
     def __init__(self):
         super().__init__(timeout=None)
-        # Botão de link OBRIGATORIAMENTE vai aqui, não como decorator
+        # Botão de link (SDR) não aceita decorator — vai no __init__
         self.add_item(discord.ui.Button(
             label="📋 Solicitação de Reembolso 📋",
-            style=discord.ButtonStyle.primary,
+            style=discord.ButtonStyle.link,
             url=config.SDR_FORM_URL,
             row=1,
         ))
 
+    # ── T.I. ─────────────────────────────────────────────────────────────────
     @discord.ui.button(
-        label="1 - Equipamentos 🖥️",
+        label="🖥️ T.I.",
         style=discord.ButtonStyle.danger,
         custom_id="menu_btn_ti",
         row=0,
@@ -68,19 +74,19 @@ class MainMenuView(discord.ui.View):
             ephemeral=True,
         )
 
+    # ── Recuperar Telefone ────────────────────────────────────────────────────
     @discord.ui.button(
-        label="2 - Recuperar Telefone 📞",
+        label="Recuperar Telefone 📞",
         style=discord.ButtonStyle.success,
         custom_id="menu_btn_contato",
         row=0,
     )
     async def contato_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(
-            contato_module.ContatoModal()
-        )
-    
+        await interaction.response.send_modal(contato_module.ContatoModal())
+
+    # ── Sistemas ──────────────────────────────────────────────────────────────
     @discord.ui.button(
-        label="3 - Sistemas ⚙️",
+        label="⚙️ Sistemas",
         style=discord.ButtonStyle.primary,
         custom_id="menu_btn_sistemas",
         row=0,
@@ -88,7 +94,7 @@ class MainMenuView(discord.ui.View):
     async def sistemas_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(
             "Selecione o sistema com problema:",
-            view=sistemas_module.ServicesView(),
+            view=sistemas_module.ServicesView(menu_interaction=interaction),
             ephemeral=True,
         )
 
@@ -99,10 +105,10 @@ def _build_menu_embed() -> discord.Embed:
         title="📋 Central de Atendimento",
         description=(
             "Bem-vindo! Selecione abaixo a área correspondente à sua necessidade.\n\n"
-            "🖥️ **Equipamentos** — Problemas técnicos com hardware, rede ou equipamentos\n"
-            "📞 **Contato** — Recuperação de telefone\n"
-            # "⚙️ **Sistemas** — ChatGuru, Whom, ClickUp\n"
-            # "📈 **SDR** — Formulário SDR\n"
+            "🖥️ **T.I.** — Problemas técnicos com hardware, rede ou equipamentos\n"
+            "📞 **Recuperar Telefone** — Recuperação de telefone de contato\n"
+            "⚙️ **Sistemas** — ChatGuru, Whom, ClickUp, E-mail\n"
+            "📋 **Solicitação de Reembolso** — Formulário de reembolso\n"
         ),
         color=discord.Color.blurple(),
     )
@@ -134,7 +140,7 @@ async def on_ready():
     # Registra views persistentes (botões funcionam após reinício)
     bot.add_view(MainMenuView())
     bot.add_view(ti_module.UrgenciaView())
-    bot.add_view(sistemas_module.ServicesView()) 
+    bot.add_view(sistemas_module.ServicesView())
 
     # Inicia tasks que precisam do event loop (só aqui, nunca em setup_modules)
     contato_module.start_tasks()
@@ -178,6 +184,17 @@ async def on_ready():
 async def on_message(message: discord.Message):
     if message.author == bot.user:
         return
+
+    # Apaga qualquer mensagem enviada no canal do menu
+    if message.guild:
+        srv_cfg = config.SERVIDORES.get(message.guild.id, {})
+        if message.channel.id == srv_cfg.get("canal_unificado"):
+            try:
+                await message.delete()
+            except Exception:
+                pass
+            return
+
     await contato_module.on_message_contato(message)
     await bot.process_commands(message)
 

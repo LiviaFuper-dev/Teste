@@ -38,6 +38,8 @@ THREAD_AUTO_ARCHIVE_MINUTES: int = 1440  # 24 h
 CHATGURU_ROLE_ID: int        = 1474430718582067320
 WHOM_ROLE_ID: int            = 1474430877827203165
 CLICKUP_SUPPORT_ROLE_ID: int = 1474431104046989312
+EMAIL_MLR_ROLE_ID: int   = 1482021270185967656   # @mlradvogados.com
+EMAIL_GMAIL_ROLE_ID: int = 1482021588701417635   # @gmail.com
 
 # ── Módulo Contato ─────────────────────────────────────────────────────────────
 CONTATO_TARGET_USER_ID: int             = 287745016003035137  # pessoa adicionada em todo tópico
