@@ -16,7 +16,11 @@ import config
 from ._engine import _update_step, _disable_view, _ping_role, PENDING_PAYLOADS
 
 # ── solutions.json ────────────────────────────────────────────────────────────
-_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# __file__ → modules/sistemas/_chatguru.py
+# dirname x1 → modules/sistemas/
+# dirname x2 → modules/
+# dirname x3 → raiz do projeto (onde está solutions.json)
+_BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _SOLUTIONS_FILE = os.path.join(_BASE_DIR, "solutions.json")
 
 try:
@@ -114,10 +118,13 @@ class ErrorNumberModal(discord.ui.Modal, title="Número do erro"):
             dm_enviado = False
             try:
                 await interaction.user.send(
-                    f"💡 **Solução encontrada para o código `{code}`** "
-                    f"(chamado: **{getattr(thread, 'name', 'sem nome')}**):\n\n"
-                    f"{solution}\n\n"
-                    "Caso o problema persista, entre em contato com a equipe de suporte."
+                    "Opa! Tudo bem?:octagonal_sign: \n\nO sistema identificou que a sua última solicitação no puxador é de um contato que **já foi recuperado antes.** \n\n"
+                    "Como a plataforma encerra chamados duplicados automaticamente para não travar a fila de atendimento de todo mundo, "
+                    "essa sua solicitação foi fechada, beleza? \n\nMas fica tranquilo que o seu contato tá na mão. "
+                    "Você pode acessar e encontrar os números dele direto por este link: :point_down: \n\n"
+                    "https://app.clickup.com/9011605202/v/li/901112971241\n\n"
+                    "**Dica: Para economizar o seu próprio tempo, dê sempre uma conferida rápida, pesquisando na lupa, "
+                    "se o contato já não está na base antes de puxar!** :rocket:"
                 )
                 dm_enviado = True
             except discord.Forbidden:

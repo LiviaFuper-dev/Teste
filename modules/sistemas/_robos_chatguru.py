@@ -5,35 +5,20 @@ Fluxo:
   Q1: O robô não está baixando todas as imagens?
     → Está baixando algumas → resumo + pinga TI
     → Baixando nenhuma     → resumo + pinga TI
+
+Steps registrados em PENDING_PAYLOADS (inicializado em _robos.py).
+Enviado ao N8N quando o TI executa !sistema.
 """
 
 import discord
 
-from ._engine import _disable_view, _ping_role
+from ._engine import PENDING_PAYLOADS, _disable_view, _ping_role, _update_step
 
 _CARGO_TI_ID = 1415390806541598831
 
-CHATGURU_ROBOS_PAYLOADS: dict[int, dict] = {}
-
-
-def _init_payload(thread_id: int, user: discord.Member) -> None:
-    CHATGURU_ROBOS_PAYLOADS[thread_id] = {
-        "thread_id": thread_id,
-        "user_id": user.id,
-        "user_name": user.display_name,
-        "sistema": "Robôs/ChatGuru",
-        "steps": {},
-    }
-
-
-def _step(thread_id: int, key: str, value: str) -> None:
-    payload = CHATGURU_ROBOS_PAYLOADS.get(thread_id)
-    if payload:
-        payload["steps"][key] = value
-
 
 def _build_resumo(thread_id: int) -> str:
-    steps = CHATGURU_ROBOS_PAYLOADS.get(thread_id, {}).get("steps", {})
+    steps = PENDING_PAYLOADS.get(thread_id, {}).get("steps", {})
 
     imagens_map = {
         "algumas": "Está baixando algumas imagens",
@@ -75,7 +60,7 @@ class ChatGuruRobosQ1View(discord.ui.View):
         return True
 
     async def _responder(self, interaction: discord.Interaction, valor: str) -> None:
-        _step(interaction.channel.id, "imagens", valor)
+        _update_step(interaction.channel.id, "imagens", valor)
         await _disable_view(interaction, self)
         await interaction.response.defer()
         await _escalar(interaction.channel, interaction.guild, interaction.channel.id)
@@ -96,7 +81,7 @@ class ChatGuruRobosQ1View(discord.ui.View):
 # ── Entrada do fluxo ──────────────────────────────────────────────────────────
 
 async def iniciar_fluxo_chatguru(thread: discord.Thread, user: discord.Member) -> None:
-    _init_payload(thread.id, user)
+    """Chamada pelo _robos.py após criar a thread e inicializar o PENDING_PAYLOADS."""
     await thread.send(
         f"Olá, {user.mention}! 👋 Vou te ajudar a identificar o problema com o robô do ChatGuru.\n\n"
         "O problema que você está tendo é o robô **não está baixando todas as imagens**?",

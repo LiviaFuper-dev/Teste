@@ -5,12 +5,26 @@ Fluxo:
   Usuário clica "E-mail" no ServicesView → thread "3 - E-mail - {usuario}"
   → bot pergunta o domínio → @gmail.com ou @mlradvogados.com
   → pinga o cargo responsável
+  → TI digita !sistema → payload enviado ao N8N com sistema + dominio_email
+
+Payload registrado em PENDING_PAYLOADS:
+  {
+    "system": "E-mail",
+    "user_id": ...,
+    "user_name": ...,
+    ...
+    "steps": {
+      "dominio_email": "gmail" | "mlradvogados"
+    }
+  }
 """
+
+import datetime
 
 import discord
 
 import config
-from ._engine import _disable_view, _ping_role
+from ._engine import PENDING_PAYLOADS, _disable_view, _ping_role, _update_step
 
 
 class EmailDomainView(discord.ui.View):
@@ -32,6 +46,7 @@ class EmailDomainView(discord.ui.View):
     async def gmail(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self._check_user(interaction):
             return
+        _update_step(interaction.channel.id, "dominio_email", "gmail")
         await _disable_view(interaction, self)
         await interaction.response.defer()
         await _ping_role(
@@ -43,6 +58,7 @@ class EmailDomainView(discord.ui.View):
     async def mlr(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self._check_user(interaction):
             return
+        _update_step(interaction.channel.id, "dominio_email", "mlradvogados")
         await _disable_view(interaction, self)
         await interaction.response.defer()
         await _ping_role(
@@ -52,7 +68,7 @@ class EmailDomainView(discord.ui.View):
 
 
 async def _criar_thread_email(interaction: discord.Interaction) -> None:
-    """Cria a thread de e-mail e envia a pergunta de domínio."""
+    """Cria a thread de e-mail, inicializa o payload e envia a pergunta de domínio."""
     await interaction.response.defer(ephemeral=True)
     guild = interaction.guild
     channel = interaction.channel
@@ -86,9 +102,30 @@ async def _criar_thread_email(interaction: discord.Interaction) -> None:
     except Exception:
         pass
 
+    # Inicializa o payload — dominio_email será preenchido quando o usuário escolher
+    PENDING_PAYLOADS[thread.id] = {
+        "event": "topic_created",
+        "system": "E-mail",
+        "user_id": user.id,
+        "user_name": user.display_name,
+        "user_tag": str(user),
+        "guild_id": guild.id,
+        "guild_name": guild.name,
+        "channel_id": channel.id,
+        "channel_name": getattr(channel, "name", None),
+        "thread_id": thread.id,
+        "thread_name": thread.name,
+        "thread_url": getattr(thread, "jump_url", None),
+        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+        "steps": {},  # dominio_email preenchido quando o botão for clicado
+    }
+    print(f"[EMAIL] Payload inicializado: thread {thread.id}")
+
     try:
         await thread.send(
-            f"Olá {user.mention}! O final do seu e-mail é:",
+            f"Olá, {user.mention}! Tudo bem? \n\n"
+            "Para conseguirmos te ajudar, precisamos saber qual é o seu e-mail. "
+            "Ele termina com **@gmail.com** ou **@mlradvogados.com**?",
             view=EmailDomainView(user.id),
         )
     except Exception as e:

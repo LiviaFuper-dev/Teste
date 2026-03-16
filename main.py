@@ -37,52 +37,11 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 class MainMenuView(discord.ui.View):
     """
     View fixada no canal unificado.
-    Cada botão abre o fluxo do módulo correspondente via ephemeral.
+    Ordem dos botões: Sistemas | Equipamentos | Recuperar Contato | Reembolso
     """
 
     def __init__(self):
         super().__init__(timeout=None)
-        # Botão de link (SDR) não aceita decorator — vai no __init__
-        self.add_item(discord.ui.Button(
-            label="📋 Solicitação de Reembolso 📋",
-            style=discord.ButtonStyle.link,
-            url=config.SDR_FORM_URL,
-            row=1,
-        ))
-
-    # ── T.I. ─────────────────────────────────────────────────────────────────
-    @discord.ui.button(
-        label="🖥️ T.I.",
-        style=discord.ButtonStyle.danger,
-        custom_id="menu_btn_ti",
-        row=0,
-    )
-    async def ti_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed = discord.Embed(
-            title="🛠️ Suporte Técnico — T.I.",
-            description=(
-                "Selecione o nível que **melhor representa sua situação**:\n\n"
-                "🟢 **Baixo** — pequenas dúvidas ou erros que não impedem o trabalho\n"
-                "🔵 **Médio** — falhas que dificultam, mas não impedem o trabalho\n"
-                "🔴 **Alto**  — situação crítica, não é possível trabalhar"
-            ),
-            color=discord.Color.blurple(),
-        )
-        await interaction.response.send_message(
-            embed=embed,
-            view=ti_module.UrgenciaView(original_interaction=interaction),
-            ephemeral=True,
-        )
-
-    # ── Recuperar Telefone ────────────────────────────────────────────────────
-    @discord.ui.button(
-        label="Recuperar Telefone 📞",
-        style=discord.ButtonStyle.success,
-        custom_id="menu_btn_contato",
-        row=0,
-    )
-    async def contato_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(contato_module.ContatoModal())
 
     # ── Sistemas ──────────────────────────────────────────────────────────────
     @discord.ui.button(
@@ -98,20 +57,122 @@ class MainMenuView(discord.ui.View):
             ephemeral=True,
         )
 
+    # ── Equipamentos ──────────────────────────────────────────────────────────
+    @discord.ui.button(
+        label="🖥️ Equipamentos",
+        style=discord.ButtonStyle.danger,
+        custom_id="menu_btn_ti",
+        row=0,
+    )
+    async def ti_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(
+            title="🛠️ Suporte Técnico — Equipamentos",
+            description=(
+                "Selecione o nível que **melhor representa sua situação**:\n\n"
+                "🟢 **Baixo** — pequenas dúvidas ou erros que não impedem o trabalho\n"
+                "🔵 **Médio** — falhas que dificultam, mas não impedem o trabalho\n"
+                "🔴 **Alto**  — situação crítica, não é possível trabalhar"
+            ),
+            color=discord.Color.blurple(),
+        )
+        await interaction.response.send_message(
+            embed=embed,
+            view=ti_module.UrgenciaView(original_interaction=interaction),
+            ephemeral=True,
+        )
+
+    # ── Recuperar Contato ─────────────────────────────────────────────────────
+    @discord.ui.button(
+        label="📞 Recuperar Contato",
+        style=discord.ButtonStyle.success,
+        custom_id="menu_btn_contato",
+        row=0,
+    )
+    async def contato_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(contato_module.ContatoModal())
+
+    # ── Solicitação de Reembolso ──────────────────────────────────────────────
+    @discord.ui.button(
+        label="📋 Solicitação de Reembolso",
+        style=discord.ButtonStyle.secondary,
+        custom_id="menu_btn_reembolso",
+        row=1,
+    )
+    async def reembolso_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        import asyncio
+        await interaction.response.send_message(
+            "📋 **Solicitação de Reembolso**\n\n"
+            "Para solicitar o reembolso de um gasto realizado para o escritório, "
+            "acesse o formulário pelo link abaixo e preencha com os detalhes do gasto e o comprovante:\n\n"
+            f"🔗 {config.SDR_FORM_URL}",
+            ephemeral=True,
+        )
+        await asyncio.sleep(10)
+        try:
+            await interaction.delete_original_response()
+        except Exception:
+            pass
+
 
 def _build_menu_embed() -> discord.Embed:
     """Cria o embed do menu principal. Atualize ao adicionar módulos."""
-    return discord.Embed(
-        title="📋 Central de Atendimento",
+    embed = discord.Embed(
+        title="Central de Atendimento",
         description=(
-            "Bem-vindo! Selecione abaixo a área correspondente à sua necessidade.\n\n"
-            "🖥️ **T.I.** — Problemas técnicos com hardware, rede ou equipamentos\n"
-            "📞 **Recuperar Telefone** — Recuperação de telefone de contato\n"
-            "⚙️ **Sistemas** — ChatGuru, Whom, ClickUp, E-mail\n"
-            "📋 **Solicitação de Reembolso** — Formulário de reembolso\n"
+            "Olá! Seja bem-vindo à Central de Atendimento do escritório.\n"
+            "Aqui você pode abrir chamados, solicitar suporte e resolver problemas do dia a dia.\n"
+            "Selecione abaixo a opção que melhor descreve a sua necessidade.\n\u200b"
         ),
         color=discord.Color.blurple(),
     )
+
+    embed.add_field(
+        name="⚙️ Sistemas",
+        value=(
+            "Problemas com as ferramentas e sistemas que utilizamos no escritório.\n"
+            "Esta opção cobre: **ChatGuru** (disparos e mensagens), **Whom** (peticionamento), "
+            "**ClickUp** (tarefas e projetos), **E-mail** (contas do escritório), "
+            "**Falepaco** (sistema interno) e **Robôs/Automações** (INSS, planilhas, IA e integrações).\n"
+            "Ao clicar, o bot fará algumas perguntas rápidas para tentar resolver automaticamente. "
+            "Se não resolver, a equipe responsável será acionada.\n\u200b"
+        ),
+        inline=False,
+    )
+
+    embed.add_field(
+        name="🖥️ Equipamentos",
+        value=(
+            "Problemas relacionados ao seu computador ou periféricos.\n"
+            "Use esta opção se o seu computador estiver lento, travando, não ligando, "
+            "ou se algum equipamento estiver com defeito — como mouse, teclado, headset, "
+            "monitor ou qualquer outro acessório de trabalho.\n\u200b"
+        ),
+        inline=False,
+    )
+
+    embed.add_field(
+        name="📞 Recuperar Contato",
+        value=(
+            "Canal para solicitar a recuperação do telefone de um contato.\n"
+            "Caso precise localizar o número de algum cliente ou pessoa de interesse "
+            "e não esteja conseguindo encontrá-lo, utilize esta opção.\n\u200b"
+        ),
+        inline=False,
+    )
+
+    embed.add_field(
+        name="📋 Solicitação de Reembolso",
+        value=(
+            "Gastou com algo necessário para o trabalho no escritório?\n"
+            "Utilize esta opção para solicitar o reembolso do valor. "
+            "Você será redirecionado para um formulário onde poderá descrever o gasto "
+            "e anexar o comprovante.\n\u200b"
+        ),
+        inline=False,
+    )
+
+    embed.set_footer(text="Em caso de dúvidas, abra um chamado e nossa equipe te ajuda.")
+    return embed
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -1,224 +1,30 @@
 """
 _robos.py — Sistema Robôs/Automações.
 
-Fluxo geral:
+Fluxo:
   Usuário clica "Robôs/Automações" → ephemeral RobosOpcaoView (some após escolha)
-  → INSS / ChatGuru / Planilhas / IA → thread "3 - Robôs/{opcao} - {usuario}"
+  → INSS      → thread + payload inicializado + fluxo de diagnóstico (_inss.py)
+  → ChatGuru  → thread + payload inicializado + fluxo de diagnóstico (_robos_chatguru.py)
+  → Planilhas → thread + payload inicializado + ping direto (sem steps)
+  → IA        → thread + payload inicializado + ping direto (sem steps)
 
-Fluxo INSS:
-  Q1: O bot não está baixando todos os documentos?
-    → Não → pede print + pinga TI
-    → Sim → Q2
-
-  Q2: Isso aconteceu com apenas esse cliente, ou com vários?
-    → Qualquer opção → Q3
-
-  Q3: É sempre o mesmo documento ou aleatório?
-    → Qualquer opção → pede print + envia resumo + pinga TI
-
-Para adicionar diagnóstico a outra opção:
-  Crie as views/funções aqui mesmo e chame no fluxo correspondente em _criar_thread().
+O payload base (system: "Automações", subsystem: opcao) é inicializado aqui.
+Cada fluxo filho adiciona seus steps via _update_step().
+Enviado ao N8N quando o TI executa !sistema.
 """
 
 import asyncio
+import datetime
 
 import discord
 
 import config
-from ._engine import _disable_view, _ping_role
-from ._robos_chatguru import iniciar_fluxo_chatguru
+from ._engine import PENDING_PAYLOADS, _ping_role, _update_step
 from ._robo_inss import iniciar_fluxo_inss
+from ._robos_chatguru import iniciar_fluxo_chatguru
 
 _CARGO_TI_ID = 1415390806541598831
 
-# Payloads pendentes por thread (thread_id → dict) — futuro envio ao N8N
-ROBOS_PAYLOADS: dict[int, dict] = {}
-
-
-def _init_payload(thread_id: int, user: discord.Member, opcao: str) -> None:
-    ROBOS_PAYLOADS[thread_id] = {
-        "thread_id": thread_id,
-        "user_id": user.id,
-        "user_name": user.display_name,
-        "sistema": f"Robôs/{opcao}",
-        "steps": {},
-    }
-
-
-def _step(thread_id: int, key: str, value: str) -> None:
-    payload = ROBOS_PAYLOADS.get(thread_id)
-    if payload:
-        payload["steps"][key] = value
-
-
-def _build_resumo_inss(thread_id: int) -> str:
-    steps = ROBOS_PAYLOADS.get(thread_id, {}).get("steps", {})
-
-    abrangencia_map = {
-        "apenas_esse": "Apenas um cliente",
-        "varios":      "Vários clientes",
-        "todos":       "Todos os clientes",
-    }
-    doc_map = {
-        "sempre_mesmo": "Sempre o mesmo documento",
-        "aleatorios":   "Documentos aleatórios",
-        "nao_sei":      "Não sabe ao certo",
-    }
-
-    linhas = ["📋 **Resumo do chamado — Robô INSS**\n"]
-    if "documentos_faltando" in steps:
-        val = "✅ Sim" if steps["documentos_faltando"] == "sim" else "❌ Não"
-        linhas.append(f"• **Bot deixando de baixar documentos?** {val}")
-    if "abrangencia" in steps:
-        linhas.append(f"• **Abrangência:** {abrangencia_map.get(steps['abrangencia'], steps['abrangencia'])}")
-    if "tipo_documento" in steps:
-        linhas.append(f"• **Tipo:** {doc_map.get(steps['tipo_documento'], steps['tipo_documento'])}")
-
-    return "\n".join(linhas)
-
-
-async def _escalar_inss(thread: discord.Thread, guild: discord.Guild, thread_id: int) -> None:
-    """Pede print, envia resumo e pinga o TI."""
-    await thread.send(
-        "📸 Por favor, envie aqui um **print da tela** com o erro ou a situação atual. "
-        "Isso vai agilizar bastante a análise da equipe."
-    )
-    await thread.send(_build_resumo_inss(thread_id))
-    await _ping_role(
-        thread, guild, _CARGO_TI_ID,
-        "🛠️ Equipe de T.I., há um chamado aguardando análise no robô do INSS:",
-    )
-
-
-# ── INSS Q3 — Tipo de documento ───────────────────────────────────────────────
-
-class InssQ3View(discord.ui.View):
-    def __init__(self, original_user_id: int):
-        super().__init__(timeout=None)
-        self.original_user_id = original_user_id
-
-    async def _check_user(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.original_user_id:
-            await interaction.response.send_message(
-                "Apenas o solicitante pode interagir aqui.", ephemeral=True
-            )
-            return False
-        return True
-
-    async def _responder(self, interaction: discord.Interaction, valor: str) -> None:
-        _step(interaction.channel.id, "tipo_documento", valor)
-        await _disable_view(interaction, self)
-        await interaction.response.defer()
-        await _escalar_inss(interaction.channel, interaction.guild, interaction.channel.id)
-
-    @discord.ui.button(label="Sempre o mesmo documento", style=discord.ButtonStyle.danger)
-    async def mesmo(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not await self._check_user(interaction):
-            return
-        await self._responder(interaction, "sempre_mesmo")
-
-    @discord.ui.button(label="Documentos aleatórios", style=discord.ButtonStyle.primary)
-    async def aleatorio(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not await self._check_user(interaction):
-            return
-        await self._responder(interaction, "aleatorios")
-
-    @discord.ui.button(label="Não sei ao certo", style=discord.ButtonStyle.secondary)
-    async def nao_sei(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not await self._check_user(interaction):
-            return
-        await self._responder(interaction, "nao_sei")
-
-
-# ── INSS Q2 — Abrangência ─────────────────────────────────────────────────────
-
-class InssQ2View(discord.ui.View):
-    def __init__(self, original_user_id: int):
-        super().__init__(timeout=None)
-        self.original_user_id = original_user_id
-
-    async def _check_user(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.original_user_id:
-            await interaction.response.send_message(
-                "Apenas o solicitante pode interagir aqui.", ephemeral=True
-            )
-            return False
-        return True
-
-    async def _avancar_q3(self, interaction: discord.Interaction, valor: str) -> None:
-        _step(interaction.channel.id, "abrangencia", valor)
-        await _disable_view(interaction, self)
-        await interaction.response.defer()
-        await interaction.channel.send(
-            "Entendido. Agora me diz: é sempre o mesmo documento que não está sendo baixado, "
-            "ou os documentos que faltam variam?",
-            view=InssQ3View(self.original_user_id),
-        )
-
-    @discord.ui.button(label="Apenas esse cliente", style=discord.ButtonStyle.success)
-    async def apenas_esse(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not await self._check_user(interaction):
-            return
-        await self._avancar_q3(interaction, "apenas_esse")
-
-    @discord.ui.button(label="Vários clientes", style=discord.ButtonStyle.primary)
-    async def varios(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not await self._check_user(interaction):
-            return
-        await self._avancar_q3(interaction, "varios")
-
-    @discord.ui.button(label="Todos os clientes", style=discord.ButtonStyle.danger)
-    async def todos(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not await self._check_user(interaction):
-            return
-        await self._avancar_q3(interaction, "todos")
-
-
-# ── INSS Q1 — Problema com download? ─────────────────────────────────────────
-
-class InssQ1View(discord.ui.View):
-    def __init__(self, original_user_id: int):
-        super().__init__(timeout=None)
-        self.original_user_id = original_user_id
-
-    async def _check_user(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.original_user_id:
-            await interaction.response.send_message(
-                "Apenas o solicitante pode interagir aqui.", ephemeral=True
-            )
-            return False
-        return True
-
-    @discord.ui.button(label="Sim", style=discord.ButtonStyle.success)
-    async def sim(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not await self._check_user(interaction):
-            return
-        _step(interaction.channel.id, "documentos_faltando", "sim")
-        await _disable_view(interaction, self)
-        await interaction.response.defer()
-        await interaction.channel.send(
-            "Isso aconteceu com apenas esse cliente, ou você está vendo o problema em vários?",
-            view=InssQ2View(self.original_user_id),
-        )
-
-    @discord.ui.button(label="Não", style=discord.ButtonStyle.danger)
-    async def nao(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not await self._check_user(interaction):
-            return
-        _step(interaction.channel.id, "documentos_faltando", "nao")
-        await _disable_view(interaction, self)
-        await interaction.response.defer()
-        await interaction.channel.send(
-            "Entendido. Pode descrever melhor o que está acontecendo e enviar um "
-            "**print da tela** com o problema? Isso vai ajudar bastante na análise. 📸"
-        )
-        await _ping_role(
-            interaction.channel, interaction.guild, _CARGO_TI_ID,
-            "🛠️ Equipe de T.I., há um chamado aguardando análise no robô do INSS:",
-        )
-
-
-# ── RobosOpcaoView ────────────────────────────────────────────────────────────
 
 class RobosOpcaoView(discord.ui.View):
     def __init__(self, menu_interaction: discord.Interaction = None):
@@ -233,7 +39,8 @@ class RobosOpcaoView(discord.ui.View):
             except Exception:
                 pass
 
-    async def _criar_thread(self, interaction: discord.Interaction, opcao: str, fluxo=None) -> None:
+    async def _criar_thread(self, interaction: discord.Interaction, opcao: str) -> discord.Thread | None:
+        """Cria a thread e inicializa o payload base comum a todos os robôs."""
         await interaction.response.defer(ephemeral=True)
         guild = interaction.guild
         channel = interaction.channel
@@ -241,7 +48,7 @@ class RobosOpcaoView(discord.ui.View):
 
         if not guild or not channel:
             await interaction.followup.send("Erro ao identificar servidor/canal.", ephemeral=True)
-            return
+            return None
 
         try:
             thread = await channel.create_thread(
@@ -251,8 +58,8 @@ class RobosOpcaoView(discord.ui.View):
             )
         except Exception as e:
             await interaction.followup.send("Erro ao criar o tópico.", ephemeral=True)
-            print(f"[SISTEMAS] Erro ao criar thread Robôs/{opcao}: {e}")
-            return
+            print(f"[ROBOS] Erro ao criar thread Robôs/{opcao}: {e}")
+            return None
 
         try:
             await thread.join()
@@ -267,34 +74,78 @@ class RobosOpcaoView(discord.ui.View):
         except Exception:
             pass
 
-        # Inicia o fluxo específico de cada opção
-        if fluxo:
-            _init_payload(thread.id, user, opcao)
-            await fluxo(thread, user)
-        else:
-            # Fluxo a definir futuramente
-            await thread.send(
-                f"Olá {user.mention}! 🤖 Chamado aberto para **Robôs/Automações — {opcao}**.\n"
-                "Descreva o problema que está enfrentando e aguarde o atendimento."
-            )
+        # Payload base — steps serão preenchidos pelo fluxo de cada subsistema
+        PENDING_PAYLOADS[thread.id] = {
+            "event": "topic_created",
+            "system": "Automações",
+            "subsystem": opcao,
+            "user_id": user.id,
+            "user_name": user.display_name,
+            "user_tag": str(user),
+            "guild_id": guild.id,
+            "guild_name": guild.name,
+            "channel_id": channel.id,
+            "channel_name": getattr(channel, "name", None),
+            "thread_id": thread.id,
+            "thread_name": thread.name,
+            "thread_url": getattr(thread, "jump_url", None),
+            "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+            "steps": {},
+        }
+        print(f"[ROBOS] Payload inicializado: thread {thread.id} subsystem={opcao}")
 
-        await self._fechar_este_ephemeral()
+        await interaction.followup.send("Tópico criado! Acesse-o para continuar.", ephemeral=True)
+        return thread
+
+    # ── INSS ──────────────────────────────────────────────────────────────────
 
     @discord.ui.button(label="INSS", style=discord.ButtonStyle.primary)
     async def inss(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._criar_thread(interaction, "INSS", fluxo=iniciar_fluxo_inss)
+        thread = await self._criar_thread(interaction, "INSS")
+        if thread:
+            await iniciar_fluxo_inss(thread, interaction.user)
+            await self._fechar_este_ephemeral()
+
+    # ── ChatGuru ──────────────────────────────────────────────────────────────
 
     @discord.ui.button(label="ChatGuru", style=discord.ButtonStyle.success)
     async def chatguru(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._criar_thread(interaction, "ChatGuru", fluxo=iniciar_fluxo_chatguru)
+        thread = await self._criar_thread(interaction, "ChatGuru")
+        if thread:
+            await iniciar_fluxo_chatguru(thread, interaction.user)
+            await self._fechar_este_ephemeral()
+
+    # ── Planilhas — ping direto, sem steps ───────────────────────────────────
 
     @discord.ui.button(label="Planilhas", style=discord.ButtonStyle.secondary)
     async def planilhas(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._criar_thread(interaction, "Planilhas")
+        thread = await self._criar_thread(interaction, "Planilhas")
+        if thread:
+            _update_step(thread.id, "opcao_escolhida", "planilhas")
+            await _ping_role(
+                thread, interaction.guild, _CARGO_TI_ID,
+                f"Olá, {interaction.user.mention}! Tudo bem? 😊\n\n"
+                "Recebemos seu chamado sobre **Robôs/Automações — Planilhas**.\n"
+                "Por favor, descreva aqui o que está acontecendo com o máximo de detalhes possível "
+                "e nossa equipe entrará em contato em breve.",
+            )
+            await self._fechar_este_ephemeral()
+
+    # ── IA — ping direto, sem steps ───────────────────────────────────────────
 
     @discord.ui.button(label="IA", style=discord.ButtonStyle.danger)
     async def ia(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._criar_thread(interaction, "IA")
+        thread = await self._criar_thread(interaction, "IA")
+        if thread:
+            _update_step(thread.id, "opcao_escolhida", "ia")
+            await _ping_role(
+                thread, interaction.guild, _CARGO_TI_ID,
+                f"Olá, {interaction.user.mention}! Tudo bem? 😊\n\n"
+                "Recebemos seu chamado sobre **Robôs/Automações — IA**.\n"
+                "Por favor, descreva aqui o que está acontecendo com o máximo de detalhes possível "
+                "e nossa equipe entrará em contato em breve.",
+            )
+            await self._fechar_este_ephemeral()
 
 
 async def _abrir_robos_menu(interaction: discord.Interaction) -> None:
