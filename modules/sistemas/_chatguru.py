@@ -118,13 +118,10 @@ class ErrorNumberModal(discord.ui.Modal, title="Número do erro"):
             dm_enviado = False
             try:
                 await interaction.user.send(
-                    "Opa! Tudo bem?:octagonal_sign: \n\nO sistema identificou que a sua última solicitação no puxador é de um contato que **já foi recuperado antes.** \n\n"
-                    "Como a plataforma encerra chamados duplicados automaticamente para não travar a fila de atendimento de todo mundo, "
-                    "essa sua solicitação foi fechada, beleza? \n\nMas fica tranquilo que o seu contato tá na mão. "
-                    "Você pode acessar e encontrar os números dele direto por este link: :point_down: \n\n"
-                    "https://app.clickup.com/9011605202/v/li/901112971241\n\n"
-                    "**Dica: Para economizar o seu próprio tempo, dê sempre uma conferida rápida, pesquisando na lupa, "
-                    "se o contato já não está na base antes de puxar!** :rocket:"
+                    f"💡 **Solução encontrada para o código `{code}`** "
+                    f"(chamado: **{getattr(thread, 'name', 'sem nome')}**):\n\n"
+                    f"{solution}\n\n"
+                    "Caso o problema persista, entre em contato com a equipe de suporte."
                 )
                 dm_enviado = True
             except discord.Forbidden:

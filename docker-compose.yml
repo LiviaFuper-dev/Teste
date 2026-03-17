@@ -1,9 +1,0 @@
-services:
-  caveira:
-    image: ghcr.io/mlradvogados/discordbot:latest
-    container_name: caveira-unificado
-    restart: unless-stopped
-    env_file:
-      - .env
-    volumes:
-      - ./solutions.json:/app/solutions.json:ro
