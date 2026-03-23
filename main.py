@@ -27,7 +27,7 @@ intents.message_content = True
 intents.members = True
 intents.guilds = True
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -239,6 +239,51 @@ async def on_ready():
             print(f"[OK] Menu enviado em '{nome}' → #{canal.name}")
         except Exception as e:
             print(f"[ERROR] Erro ao enviar menu em '{nome}': {e}")
+
+
+
+@bot.command(name="help")
+async def help_cmd(ctx: commands.Context):
+    """Lista os comandos disponíveis para a equipe."""
+    embed = discord.Embed(
+        title="📖 Comandos disponíveis",
+        description="Estes comandos são usados **dentro dos tópicos** abertos pelos colaboradores. Use-os para encerrar o atendimento corretamente.",
+        color=discord.Color.blurple(),
+    )
+
+    embed.add_field(
+        name="🖥️ `!logs`",
+        value=(
+            "Usado dentro de um tópico de **Equipamentos/T.I.**\n"
+            "Remove o colaborador do tópico, abre um formulário para você preencher "
+            "(empresa, tipo do problema e nível real), gera um arquivo de log com todo "
+            "o histórico da conversa e envia os dados para o sistema. O tópico é apagado automaticamente ao final."
+        ),
+        inline=False,
+    )
+
+    embed.add_field(
+        name="⚙️ `!sistema`",
+        value=(
+            "Usado dentro de um tópico de **Sistemas** (ChatGuru, Whom, ClickUp, E-mail, Falepaco, 3c+, Robôs).\n"
+            "Remove o colaborador do tópico, pede que você selecione o setor do colaborador "
+            "e envia todas as informações do atendimento para o sistema. O tópico é apagado automaticamente ao final."
+        ),
+        inline=False,
+    )
+
+    embed.add_field(
+        name="📞 `!contato`",
+        value=(
+            "Usado dentro de um tópico de **Recuperar Contato**.\n"
+            "Indica que a busca foi concluída — envia a mensagem de conclusão para o colaborador, "
+            "remove o responsável pela busca do tópico e agenda o fechamento automático após 12 horas."
+        ),
+        inline=False,
+    )
+
+    embed.set_footer(text="Todos os comandos só funcionam dentro dos tópicos correspondentes.")
+    await ctx.reply(embed=embed, mention_author=False)
 
 
 @bot.event

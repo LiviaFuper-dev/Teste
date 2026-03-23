@@ -56,10 +56,9 @@ def _get_cargo_ti(guild: discord.Guild, guild_id: int) -> discord.Role | None:
 # ── Modal: descrição do problema ──────────────────────────────────────────────
 
 class DescricaoModal(discord.ui.Modal):
-    def __init__(self, nivel: str, original_interaction: discord.Interaction = None):
+    def __init__(self, nivel: str):
         super().__init__(title=f"Descreva o problema — {nivel}")
         self.nivel = nivel
-        self.original_interaction = original_interaction
         self.descricao = discord.ui.TextInput(
             label="Descrição do problema",
             style=discord.TextStyle.long,
@@ -70,36 +69,40 @@ class DescricaoModal(discord.ui.Modal):
         self.add_item(self.descricao)
 
     async def on_submit(self, interaction: discord.Interaction):
-        await _criar_chamado(
-            interaction, self.nivel, self.descricao.value, self.original_interaction
-        )
+        await _criar_chamado(interaction, self.nivel, self.descricao.value)
+
 
 # ── View: seleção de urgência ─────────────────────────────────────────────────
 # Enviada ephemeralmente quando o usuário clica no botão "T.I." do menu principal.
 # custom_ids únicos garantem que os botões funcionem após reinício do bot.
 
 class UrgenciaView(discord.ui.View):
-    def __init__(self, original_interaction: discord.Interaction = None):
+    def __init__(self):
         super().__init__(timeout=None)
-        self.original_interaction = original_interaction
 
-    @discord.ui.button(label="🟢 Baixo", style=discord.ButtonStyle.success, custom_id="ti_urgencia_baixo")
+    @discord.ui.button(
+        label="🟢 Baixo",
+        style=discord.ButtonStyle.success,
+        custom_id="ti_urgencia_baixo",
+    )
     async def baixo(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(
-            DescricaoModal("1 - Baixo", self.original_interaction)
-        )
+        await interaction.response.send_modal(DescricaoModal("Baixo"))
 
-    @discord.ui.button(label="🔵 Médio", style=discord.ButtonStyle.primary, custom_id="ti_urgencia_medio")
+    @discord.ui.button(
+        label="🔵 Médio",
+        style=discord.ButtonStyle.primary,
+        custom_id="ti_urgencia_medio",
+    )
     async def medio(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(
-            DescricaoModal("1 - Médio", self.original_interaction)
-        )
+        await interaction.response.send_modal(DescricaoModal("Médio"))
 
-    @discord.ui.button(label="🔴 Alto", style=discord.ButtonStyle.danger, custom_id="ti_urgencia_alto")
+    @discord.ui.button(
+        label="🔴 Alto",
+        style=discord.ButtonStyle.danger,
+        custom_id="ti_urgencia_alto",
+    )
     async def alto(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(
-            DescricaoModal("1 - Alto", self.original_interaction)
-        )
+        await interaction.response.send_modal(DescricaoModal("Alto"))
 
 
 # ── Criação do chamado ────────────────────────────────────────────────────────
@@ -108,7 +111,6 @@ async def _criar_chamado(
     interaction: discord.Interaction,
     nivel: str,
     descricao: str,
-    original_interaction: discord.Interaction = None,  # ← novo parâmetro
 ) -> None:
     await interaction.response.defer(ephemeral=True)
     guild = interaction.guild
@@ -198,13 +200,9 @@ async def _criar_chamado(
     except Exception as e:
         print(f"[TI] Erro ao enviar embed: {e}")
 
-    # Apaga o ephemeral do menu após 3 segundos (tempo pro usuário ver o link)
-    if original_interaction:
-        await asyncio.sleep(3)
-        try:
-            await original_interaction.delete_original_response()
-        except Exception:
-            pass
+    await interaction.followup.send(
+        f"✅ Chamado criado: {thread.mention}", ephemeral=True
+    )
 
 
 # ── Formulário de logs (!logs) ────────────────────────────────────────────────
@@ -212,7 +210,7 @@ async def _criar_chamado(
 class LogsFormView(discord.ui.View):
     """
     Formulário exibido no tópico após !logs.
-    Selects de Empresa / Tipo / Nível + botão Confirmar.
+    Selects de Empresa / Nível + botão Confirmar.
     Somente membros com cargo T.I. podem confirmar.
     """
 
@@ -220,8 +218,7 @@ class LogsFormView(discord.ui.View):
         super().__init__(timeout=timeout)
         self.guild_id = guild_id
         self.selected_empresa: str | None = None
-        self.selected_tipo: str = "Hardware"
-        self.selected_nivel: str = "Baixo"
+        self.selected_nivel: str | None = None
         self.form_response: dict | None = None
 
     @discord.ui.select(
@@ -234,25 +231,14 @@ class LogsFormView(discord.ui.View):
             discord.SelectOption(label="Mlr Advogados", value="mlr_advogados"),
         ],
     )
-
-    @discord.ui.select(
-        placeholder="Tipo de problema",
-        min_values=1,
-        max_values=1,
-        custom_id="ti_logs_tipo",
-        options=[
-            discord.SelectOption(label="Hardware", value="Hardware"),
-            discord.SelectOption(label="Software", value="Software"),
-            discord.SelectOption(label="Suporte",  value="Suporte"),
-        ],
-    )
-    async def tipo_select(
+    async def empresa_select(
         self, interaction: discord.Interaction, select: discord.ui.Select
     ):
-        self.selected_tipo = select.values[0]
+        self.selected_empresa = select.values[0]
+        label = "Fuper" if self.selected_empresa == "fuper" else "Mlr Advogados"
         try:
             await interaction.response.send_message(
-                f"Tipo selecionado: **{self.selected_tipo}**", ephemeral=True
+                f"Empresa selecionada: **{label}**", ephemeral=True
             )
         except Exception:
             pass
@@ -301,10 +287,10 @@ class LogsFormView(discord.ui.View):
                 pass
             return
 
-        if not self.selected_empresa:
+        if not self.selected_empresa or not self.selected_nivel:
             try:
                 await interaction.response.send_message(
-                    "❌ Selecione **Empresa**, **Tipo** e **Nível** antes de confirmar.",
+                    "❌ Selecione **Empresa** e **Nível** antes de confirmar.",
                     ephemeral=True,
                 )
             except Exception:
@@ -312,10 +298,9 @@ class LogsFormView(discord.ui.View):
             return
 
         self.form_response = {
-            "empresa":            self.selected_empresa,
-            "tipo":               self.selected_tipo,
+            "empresa":             self.selected_empresa,
             "nivel_real_problema": self.selected_nivel,
-            "confirmado_por":     member.display_name,
+            "confirmado_por":      member.display_name,
         }
 
         try:
