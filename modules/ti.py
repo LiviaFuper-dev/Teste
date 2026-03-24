@@ -10,6 +10,8 @@ Comportamento preservado do caveira-ti.py original:
 Melhorias aplicadas:
   - Sem `global motivo` — descrição salva por thread_id em _THREAD_MOTIVO
   - Bug da variável `summary` não definida corrigido
+  - Bug do select de empresa sem handler corrigido
+  - Select de Tipo de problema removido (formulário agora tem Empresa + Nível)
   - custom_ids em todos os componentes persistentes
 """
 
@@ -25,23 +27,16 @@ from utils.thread_utils import safe_join_thread, remove_members_except
 
 
 # ── Armazenamento local ────────────────────────────────────────────────────────
-# Guarda a descrição original do chamado por thread_id.
-# Usado ao gerar logs para incluir o motivo no payload N8N.
 _THREAD_MOTIVO: dict[int, str] = {}
 
 
 # ── Helpers internos ───────────────────────────────────────────────────────────
 
 def _ti_cfg(guild_id: int) -> dict:
-    """Retorna o sub-dict 'ti' da config do servidor."""
     return config.SERVIDORES.get(guild_id, {}).get("ti", {})
 
 
 def _get_cargo_ti(guild: discord.Guild, guild_id: int) -> discord.Role | None:
-    """
-    Resolve o cargo de T.I. pelo ID configurado.
-    Fallback: primeiro cargo cujo nome contenha ti / t.i / tecnico / suporte.
-    """
     role_id = _ti_cfg(guild_id).get("cargo_ti")
     if role_id:
         role = guild.get_role(role_id)
@@ -56,9 +51,10 @@ def _get_cargo_ti(guild: discord.Guild, guild_id: int) -> discord.Role | None:
 # ── Modal: descrição do problema ──────────────────────────────────────────────
 
 class DescricaoModal(discord.ui.Modal):
-    def __init__(self, nivel: str):
+    def __init__(self, nivel: str, original_interaction: discord.Interaction = None):
         super().__init__(title=f"Descreva o problema — {nivel}")
         self.nivel = nivel
+        self.original_interaction = original_interaction
         self.descricao = discord.ui.TextInput(
             label="Descrição do problema",
             style=discord.TextStyle.long,
@@ -69,40 +65,35 @@ class DescricaoModal(discord.ui.Modal):
         self.add_item(self.descricao)
 
     async def on_submit(self, interaction: discord.Interaction):
-        await _criar_chamado(interaction, self.nivel, self.descricao.value)
+        await _criar_chamado(
+            interaction, self.nivel, self.descricao.value, self.original_interaction
+        )
 
 
 # ── View: seleção de urgência ─────────────────────────────────────────────────
-# Enviada ephemeralmente quando o usuário clica no botão "T.I." do menu principal.
-# custom_ids únicos garantem que os botões funcionem após reinício do bot.
 
 class UrgenciaView(discord.ui.View):
-    def __init__(self):
+    def __init__(self, original_interaction: discord.Interaction = None):
         super().__init__(timeout=None)
+        self.original_interaction = original_interaction
 
-    @discord.ui.button(
-        label="🟢 Baixo",
-        style=discord.ButtonStyle.success,
-        custom_id="ti_urgencia_baixo",
-    )
+    @discord.ui.button(label="🟢 Baixo", style=discord.ButtonStyle.success, custom_id="ti_urgencia_baixo")
     async def baixo(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(DescricaoModal("Baixo"))
+        await interaction.response.send_modal(
+            DescricaoModal("1 - Baixo", self.original_interaction)
+        )
 
-    @discord.ui.button(
-        label="🔵 Médio",
-        style=discord.ButtonStyle.primary,
-        custom_id="ti_urgencia_medio",
-    )
+    @discord.ui.button(label="🔵 Médio", style=discord.ButtonStyle.primary, custom_id="ti_urgencia_medio")
     async def medio(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(DescricaoModal("Médio"))
+        await interaction.response.send_modal(
+            DescricaoModal("1 - Médio", self.original_interaction)
+        )
 
-    @discord.ui.button(
-        label="🔴 Alto",
-        style=discord.ButtonStyle.danger,
-        custom_id="ti_urgencia_alto",
-    )
+    @discord.ui.button(label="🔴 Alto", style=discord.ButtonStyle.danger, custom_id="ti_urgencia_alto")
     async def alto(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(DescricaoModal("Alto"))
+        await interaction.response.send_modal(
+            DescricaoModal("1 - Alto", self.original_interaction)
+        )
 
 
 # ── Criação do chamado ────────────────────────────────────────────────────────
@@ -111,6 +102,7 @@ async def _criar_chamado(
     interaction: discord.Interaction,
     nivel: str,
     descricao: str,
+    original_interaction: discord.Interaction = None,
 ) -> None:
     await interaction.response.defer(ephemeral=True)
     guild = interaction.guild
@@ -130,7 +122,6 @@ async def _criar_chamado(
 
     cargo_ti = _get_cargo_ti(guild, guild.id)
 
-    # Cria a thread privada
     try:
         thread = await channel.create_thread(
             name=f"{nivel} - {interaction.user.display_name}",
@@ -149,19 +140,15 @@ async def _criar_chamado(
         await interaction.followup.send("❌ Erro ao criar tópico.", ephemeral=True)
         return
 
-    # Bot entra na thread
     await safe_join_thread(interaction.client.user, thread)
 
-    # Adiciona o solicitante
     try:
         await thread.add_user(interaction.user)
     except Exception:
         pass
 
-    # Salva o motivo para uso posterior em !logs
     _THREAD_MOTIVO[thread.id] = descricao
 
-    # Mensagem inicial com a descrição do usuário
     try:
         await thread.send(
             f"**Solicitação de {interaction.user.display_name}:**\n{descricao}"
@@ -169,10 +156,9 @@ async def _criar_chamado(
     except Exception as e:
         print(f"[TI] Erro ao enviar descrição inicial: {e}")
 
-    # Embed principal do chamado
     color = (
-        discord.Color.green() if nivel == "Baixo"
-        else discord.Color.red() if nivel == "Alto"
+        discord.Color.green() if "Baixo" in nivel
+        else discord.Color.red() if "Alto" in nivel
         else discord.Color.gold()
     )
     quoted = "\n".join(f"> {line}" for line in descricao.splitlines())
@@ -200,9 +186,12 @@ async def _criar_chamado(
     except Exception as e:
         print(f"[TI] Erro ao enviar embed: {e}")
 
-    await interaction.followup.send(
-        f"✅ Chamado criado: {thread.mention}", ephemeral=True
-    )
+    if original_interaction:
+        await asyncio.sleep(3)
+        try:
+            await original_interaction.delete_original_response()
+        except Exception:
+            pass
 
 
 # ── Formulário de logs (!logs) ────────────────────────────────────────────────
@@ -210,7 +199,7 @@ async def _criar_chamado(
 class LogsFormView(discord.ui.View):
     """
     Formulário exibido no tópico após !logs.
-    Selects de Empresa / Nível + botão Confirmar.
+    Selects de Empresa e Nível + botão Confirmar.
     Somente membros com cargo T.I. podem confirmar.
     """
 
@@ -218,16 +207,17 @@ class LogsFormView(discord.ui.View):
         super().__init__(timeout=timeout)
         self.guild_id = guild_id
         self.selected_empresa: str | None = None
-        self.selected_nivel: str | None = None
+        self.selected_nivel: str = "Baixo"
         self.form_response: dict | None = None
 
+    # ── Select: Empresa ───────────────────────────────────────────────────────
     @discord.ui.select(
         placeholder="Empresa (Fuper / Mlr Advogados)",
         min_values=1,
         max_values=1,
         custom_id="ti_logs_empresa",
         options=[
-            discord.SelectOption(label="Fuper",        value="fuper"),
+            discord.SelectOption(label="Fuper",         value="fuper"),
             discord.SelectOption(label="Mlr Advogados", value="mlr_advogados"),
         ],
     )
@@ -235,14 +225,14 @@ class LogsFormView(discord.ui.View):
         self, interaction: discord.Interaction, select: discord.ui.Select
     ):
         self.selected_empresa = select.values[0]
-        label = "Fuper" if self.selected_empresa == "fuper" else "Mlr Advogados"
         try:
             await interaction.response.send_message(
-                f"Empresa selecionada: **{label}**", ephemeral=True
+                f"Empresa selecionada: **{self.selected_empresa}**", ephemeral=True
             )
         except Exception:
             pass
 
+    # ── Select: Nível ─────────────────────────────────────────────────────────
     @discord.ui.select(
         placeholder="Nível real do problema",
         min_values=1,
@@ -265,6 +255,7 @@ class LogsFormView(discord.ui.View):
         except Exception:
             pass
 
+    # ── Botão: Confirmar ──────────────────────────────────────────────────────
     @discord.ui.button(
         label="✅ Confirmar e gerar logs",
         style=discord.ButtonStyle.danger,
@@ -276,7 +267,6 @@ class LogsFormView(discord.ui.View):
         guild = interaction.guild
         member = interaction.user
 
-        # Verificação de cargo
         cargo_ti = _get_cargo_ti(guild, guild.id)
         if not cargo_ti or cargo_ti not in member.roles:
             try:
@@ -287,7 +277,7 @@ class LogsFormView(discord.ui.View):
                 pass
             return
 
-        if not self.selected_empresa or not self.selected_nivel:
+        if not self.selected_empresa:
             try:
                 await interaction.response.send_message(
                     "❌ Selecione **Empresa** e **Nível** antes de confirmar.",
@@ -393,17 +383,16 @@ async def _process_and_finalize(
     motivo = _THREAD_MOTIVO.pop(channel.id, "")
     if config.N8N_WEBHOOK_TI:
         payload = {
-            "empresa":            form_response.get("empresa"),
-            "tipo":               form_response.get("tipo"),
+            "empresa":             form_response.get("empresa"),
             "nivel_real_problema": form_response.get("nivel_real_problema"),
-            "confirmado_por":     form_response.get("confirmado_por"),
-            "thread":             channel.name,
-            "thread_id":          channel.id,
-            "canal_logs":         canal_logs_id,
-            "servidor":           config.SERVIDORES.get(guild.id, {}).get("nome"),
-            "guild_id":           guild.id,
-            "timestamp":          datetime.datetime.utcnow().isoformat() + "Z",
-            "motivo":             motivo,
+            "confirmado_por":      form_response.get("confirmado_por"),
+            "thread":              channel.name,
+            "thread_id":           channel.id,
+            "canal_logs":          canal_logs_id,
+            "servidor":            config.SERVIDORES.get(guild.id, {}).get("nome"),
+            "guild_id":            guild.id,
+            "timestamp":           datetime.datetime.utcnow().isoformat() + "Z",
+            "motivo":              motivo,
         }
         await n8n_utils.send(config.N8N_WEBHOOK_TI, payload)
 
@@ -436,20 +425,9 @@ async def _process_and_finalize(
 # ── Registro do comando !logs ─────────────────────────────────────────────────
 
 def setup(bot: commands.Bot) -> None:
-    """
-    Registra o comando !logs no bot.
-    Chame esta função UMA vez em main.py antes de bot.run().
-    """
 
     @bot.command(name="logs")
     async def gerar_logs(ctx: commands.Context):
-        """
-        Fecha um tópico de suporte TI.
-        1. Remove o colaborador imediatamente.
-        2. Exibe formulário para o T.I. preencher.
-        3. Gera log .txt, envia ao canal de logs e ao N8N.
-        4. Deleta o tópico.
-        """
         guild = ctx.guild
         channel = ctx.channel
 
@@ -458,7 +436,7 @@ def setup(bot: commands.Bot) -> None:
             return
 
         if guild.id not in config.SERVIDORES:
-            return  # guild não configurada — silencioso
+            return
 
         if not isinstance(channel, discord.Thread):
             await ctx.reply(
@@ -472,9 +450,9 @@ def setup(bot: commands.Bot) -> None:
             return
 
         if cargo_ti not in ctx.author.roles:
-            return  # sem cargo TI — silencioso para não poluir o tópico
+            return
 
-        # 1. Remove imediatamente todos sem cargo TI (colaborador sai agora)
+        # 1. Remove imediatamente todos sem cargo TI
         allowed = {cargo_ti.id}
         removed, failed = await remove_members_except(channel, guild, allowed)
 
@@ -486,11 +464,11 @@ def setup(bot: commands.Bot) -> None:
         except Exception:
             pass
 
-        # 2. Envia formulário (visível apenas para T.I.)
+        # 2. Envia formulário
         view = LogsFormView(guild_id=guild.id, timeout=120.0)
         try:
             await ctx.reply(
-                "Por favor, selecione **Empresa**, **Tipo** e **Nível** e clique em **Confirmar**.",
+                "Por favor, selecione **Empresa** e **Nível** e clique em **Confirmar**.",
                 view=view,
                 mention_author=False,
             )

@@ -205,12 +205,12 @@ class ServicesView(discord.ui.View):
         await _criar_thread_email(interaction)
         await self._fechar_ephemeral()
 
-    @discord.ui.button(label="📞 Falepaco 📞", style=discord.ButtonStyle.primary, custom_id="sistemas_btn_falepaco")
+    @discord.ui.button(label="🟣 Falepaco 🟣", style=discord.ButtonStyle.primary, custom_id="sistemas_btn_falepaco")
     async def falepaco(self, interaction: discord.Interaction, button: discord.ui.Button):
         await _abrir_falepaco_menu(interaction)
         await self._fechar_ephemeral()
 
-    @discord.ui.button(label="☎️ 3C+ ☎️", style=discord.ButtonStyle.success, custom_id="sistemas_btn_3cplus")
+    @discord.ui.button(label="3c+", style=discord.ButtonStyle.success, custom_id="sistemas_btn_3cplus")
     async def tres_c_plus(self, interaction: discord.Interaction, button: discord.ui.Button):
         await _abrir_3cplus(interaction)
         await self._fechar_ephemeral()
@@ -220,7 +220,7 @@ class ServicesView(discord.ui.View):
         await _abrir_robos_menu(interaction)
         await self._fechar_ephemeral()
 
-    @discord.ui.button(label="☎️ 3C+ ☎️", style=discord.ButtonStyle.success, custom_id="sistemas_btn_3cplus")
+    @discord.ui.button(label="3c+", style=discord.ButtonStyle.success, custom_id="sistemas_btn_3cplus")
     async def tres_c_plus(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
         guild = interaction.guild
