@@ -22,6 +22,7 @@ from ._engine import SISTEMAS_CONFIG, PENDING_PAYLOADS, ProblemTypeView, _ping_r
 from ._chatguru import ChatGuruFourthView
 from ._whom import WhomWarningView
 from ._email import _criar_thread_email
+from ._google_drive import _criar_thread_google_drive
 from ._falepaco import _abrir_falepaco_menu
 from ._robos import _abrir_robos_menu
 from ._3c import _abrir_3cplus
@@ -205,6 +206,11 @@ class ServicesView(discord.ui.View):
         await _criar_thread_email(interaction)
         await self._fechar_ephemeral()
 
+    @discord.ui.button(label="📁 Google Drive 📁", style=discord.ButtonStyle.secondary, custom_id="sistemas_btn_gdrive")
+    async def google_drive(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await _criar_thread_google_drive(interaction)
+        await self._fechar_ephemeral()
+
     @discord.ui.button(label="🟣 Falepaco 🟣", style=discord.ButtonStyle.primary, custom_id="sistemas_btn_falepaco")
     async def falepaco(self, interaction: discord.Interaction, button: discord.ui.Button):
         await _abrir_falepaco_menu(interaction)
@@ -218,74 +224,6 @@ class ServicesView(discord.ui.View):
     @discord.ui.button(label="🤖 Robôs/Automações 🤖", style=discord.ButtonStyle.secondary, custom_id="sistemas_btn_robos")
     async def robos(self, interaction: discord.Interaction, button: discord.ui.Button):
         await _abrir_robos_menu(interaction)
-        await self._fechar_ephemeral()
-
-    @discord.ui.button(label="3c+", style=discord.ButtonStyle.success, custom_id="sistemas_btn_3cplus")
-    async def tres_c_plus(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
-        guild = interaction.guild
-        channel = interaction.channel
-        user = interaction.user
-
-        if not guild or not channel:
-            await interaction.followup.send("Erro ao identificar servidor/canal.", ephemeral=True)
-            return
-
-        try:
-            thread = await channel.create_thread(
-                name=f"3 - 3c+ - {user.display_name}",
-                type=discord.ChannelType.private_thread,
-                auto_archive_duration=config.THREAD_AUTO_ARCHIVE_MINUTES,
-            )
-        except Exception as e:
-            await interaction.followup.send("Erro ao criar o tópico.", ephemeral=True)
-            print(f"[SISTEMAS] Erro ao criar thread 3c+: {e}")
-            return
-
-        try:
-            await thread.join()
-        except Exception:
-            try:
-                await thread.add_user(interaction.client.user)
-            except Exception:
-                pass
-
-        try:
-            await thread.add_user(user)
-        except Exception:
-            pass
-
-        PENDING_PAYLOADS[thread.id] = {
-            "event": "topic_created",
-            "system": "3c+",
-            "user_id": user.id,
-            "user_name": user.display_name,
-            "user_tag": str(user),
-            "guild_id": guild.id,
-            "guild_name": guild.name,
-            "channel_id": channel.id,
-            "channel_name": getattr(channel, "name", None),
-            "thread_id": thread.id,
-            "thread_name": thread.name,
-            "thread_url": getattr(thread, "jump_url", None),
-            "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
-            "steps": {},
-        }
-
-        role = guild.get_role(1484627219518062864)
-        try:
-            await thread.send(
-                f"Olá, {user.mention}! Tudo bem? 😊\n\n"
-                "Recebemos seu chamado sobre o **3c+**.\n"
-                "Por favor, descreva aqui o que está acontecendo e nossa equipe entrará em contato em breve.",
-                allowed_mentions=discord.AllowedMentions(roles=True),
-            )
-            if role:
-                await thread.send(role.mention, allowed_mentions=discord.AllowedMentions(roles=True))
-        except Exception as e:
-            print(f"[SISTEMAS] Erro ao enviar mensagem na thread 3c+: {e}")
-
-        await interaction.followup.send("Tópico criado! Acesse-o para continuar.", ephemeral=True)
         await self._fechar_ephemeral()
 
 
