@@ -137,9 +137,9 @@ def setup(bot: commands.Bot) -> None:
             )
             return
 
-        if not channel.name.startswith("3 -"):
+        if not channel.name.startswith("1 -"):
             await ctx.reply(
-                "Este comando só funciona em tópicos de sistemas (prefixo '3 -').",
+                "Este comando só funciona em tópicos de sistemas (prefixo '1 -').",
                 mention_author=False,
             )
             return

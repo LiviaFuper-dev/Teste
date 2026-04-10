@@ -1,18 +1,12 @@
 """
 modules/ti.py — Módulo de Suporte Técnico (T.I.)
 
-Comportamento preservado do caveira-ti.py original:
-  - Usuário clica em "T.I." no menu principal → recebe ephemeral com seleção de urgência
+Fluxo:
+  - Usuário clica em "Equipamentos" → ephemeral com seleção de urgência
   - Seleciona Baixo / Médio / Alto → modal de descrição
   - Submete → thread privada criada com embed + ping do cargo TI
-  - TI digita !logs → remove colaborador, abre formulário, gera log .txt, envia N8N, deleta thread
-
-Melhorias aplicadas:
-  - Sem `global motivo` — descrição salva por thread_id em _THREAD_MOTIVO
-  - Bug da variável `summary` não definida corrigido
-  - Bug do select de empresa sem handler corrigido
-  - Select de Tipo de problema removido (formulário agora tem Empresa + Nível)
-  - custom_ids em todos os componentes persistentes
+  - TI digita !logs → remove colaborador, abre formulário (Empresa + Nível),
+    gera log .txt, envia N8N, deleta thread
 """
 
 import io
@@ -80,19 +74,19 @@ class UrgenciaView(discord.ui.View):
     @discord.ui.button(label="🟢 Baixo", style=discord.ButtonStyle.success, custom_id="ti_urgencia_baixo")
     async def baixo(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(
-            DescricaoModal("1 - Baixo", self.original_interaction)
+            DescricaoModal("2 - Baixo", self.original_interaction)
         )
 
     @discord.ui.button(label="🔵 Médio", style=discord.ButtonStyle.primary, custom_id="ti_urgencia_medio")
     async def medio(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(
-            DescricaoModal("1 - Médio", self.original_interaction)
+            DescricaoModal("2 - Médio", self.original_interaction)
         )
 
     @discord.ui.button(label="🔴 Alto", style=discord.ButtonStyle.danger, custom_id="ti_urgencia_alto")
     async def alto(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(
-            DescricaoModal("1 - Alto", self.original_interaction)
+            DescricaoModal("2 - Alto", self.original_interaction)
         )
 
 
@@ -186,6 +180,10 @@ async def _criar_chamado(
     except Exception as e:
         print(f"[TI] Erro ao enviar embed: {e}")
 
+    await interaction.followup.send(
+        f"✅ Chamado criado: {thread.mention}", ephemeral=True
+    )
+
     if original_interaction:
         await asyncio.sleep(3)
         try:
@@ -207,10 +205,9 @@ class LogsFormView(discord.ui.View):
         super().__init__(timeout=timeout)
         self.guild_id = guild_id
         self.selected_empresa: str | None = None
-        self.selected_nivel: str = "Baixo"
+        self.selected_nivel: str | None = None
         self.form_response: dict | None = None
 
-    # ── Select: Empresa ───────────────────────────────────────────────────────
     @discord.ui.select(
         placeholder="Empresa (Fuper / Mlr Advogados)",
         min_values=1,
@@ -225,14 +222,14 @@ class LogsFormView(discord.ui.View):
         self, interaction: discord.Interaction, select: discord.ui.Select
     ):
         self.selected_empresa = select.values[0]
+        label = "Fuper" if self.selected_empresa == "fuper" else "Mlr Advogados"
         try:
             await interaction.response.send_message(
-                f"Empresa selecionada: **{self.selected_empresa}**", ephemeral=True
+                f"Empresa selecionada: **{label}**", ephemeral=True
             )
         except Exception:
             pass
 
-    # ── Select: Nível ─────────────────────────────────────────────────────────
     @discord.ui.select(
         placeholder="Nível real do problema",
         min_values=1,
@@ -255,7 +252,6 @@ class LogsFormView(discord.ui.View):
         except Exception:
             pass
 
-    # ── Botão: Confirmar ──────────────────────────────────────────────────────
     @discord.ui.button(
         label="✅ Confirmar e gerar logs",
         style=discord.ButtonStyle.danger,
@@ -277,7 +273,7 @@ class LogsFormView(discord.ui.View):
                 pass
             return
 
-        if not self.selected_empresa:
+        if not self.selected_empresa or not self.selected_nivel:
             try:
                 await interaction.response.send_message(
                     "❌ Selecione **Empresa** e **Nível** antes de confirmar.",
@@ -420,6 +416,36 @@ async def _process_and_finalize(
         print(f"[TI] Tópico '{channel.name}' deletado.")
     except Exception as e:
         print(f"[TI] Erro ao deletar tópico: {e}")
+
+
+# ── Auto-fechamento por inatividade (chamado pelo main.py) ────────────────────
+
+async def auto_fechar_ti(thread: discord.Thread, guild: discord.Guild) -> None:
+    """
+    Tópico de TI inativo por 24h.
+    Remove membros sem cargo TI e exibe o LogsFormView para o staff
+    finalizar o chamado (mesmo fluxo do !logs).
+    """
+    cargo_ti = _get_cargo_ti(guild, guild.id)
+    if not cargo_ti:
+        print(f"[TI-AUTO] Cargo TI não encontrado para guild {guild.id}")
+        return
+
+    # Remove membros sem cargo TI (replica o !logs)
+    allowed = {cargo_ti.id}
+    await remove_members_except(thread, guild, allowed)
+
+    await thread.send(
+        "⏰ Este chamado atingiu **24 horas de inatividade**.\n"
+        "Por favor, finalize o atendimento preenchendo o formulário abaixo."
+    )
+
+    view = LogsFormView(guild_id=guild.id, timeout=None)
+    await thread.send(
+        "Selecione **Empresa** e **Nível** e clique em **Confirmar**.",
+        view=view,
+    )
+    print(f"[TI-AUTO] Formulário de logs enviado em '{thread.name}' ({thread.id})")
 
 
 # ── Registro do comando !logs ─────────────────────────────────────────────────

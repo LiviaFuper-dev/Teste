@@ -1,22 +1,26 @@
 """
 main.py — Entry point do Caveira Unificado.
 
-Como adicionar um novo módulo:
-  1. Crie modules/seu_modulo.py com uma função setup(bot) e uma View de entrada.
-  2. Importe aqui: from modules import seu_modulo
-  3. Registre em setup_modules(): seu_modulo.setup(bot)
-  4. Adicione um botão em MainMenuView chamando a View de entrada do módulo.
-  5. Atualize o embed de boas-vindas em _build_menu_embed().
-  6. Registre a view persistente em on_ready(): bot.add_view(seu_modulo.SuaView())
+Auto-fechamento por inatividade:
+  - Tópicos "1 - *" (sistemas) → fechados automaticamente após 24h sem mensagem
+  - Tópicos "2 - *" (equipamentos/TI) → fechados automaticamente após 24h sem mensagem
+  - Thread IDs já processados são salvos em data/thread_auto_actions.json
+    para não serem fechados novamente após reinício do bot.
 """
 
+from __future__ import annotations
+
+import json
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 import config
-from modules import ti as ti_module
 from modules import contato as contato_module
 from modules import sistemas as sistemas_module
+from modules import ti as ti_module
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Bot
@@ -29,21 +33,165 @@ intents.guilds = True
 
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
+AUTO_INACTIVITY_HOURS = 1
+_HANDLED_FILE = Path("data/thread_auto_actions.json")
+_HANDLED_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Persistência de tópicos já fechados automaticamente
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _load_handled() -> set[int]:
+    if not _HANDLED_FILE.exists():
+        return set()
+    try:
+        return {int(x) for x in json.loads(_HANDLED_FILE.read_text(encoding="utf-8"))}
+    except Exception:
+        return set()
+
+
+def _save_handled(ids: set[int]) -> None:
+    try:
+        _HANDLED_FILE.write_text(
+            json.dumps(sorted(ids), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Loop de auto-fechamento
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _ultima_atividade(thread: discord.Thread) -> datetime:
+    """Retorna o datetime da última mensagem do tópico (ou created_at se vazio)."""
+    try:
+        async for msg in thread.history(limit=1):
+            ts = msg.created_at
+            return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+    except Exception:
+        pass
+    ts = thread.created_at or datetime.now(timezone.utc)
+    return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+
+
+@tasks.loop(minutes=1)
+async def auto_fechar_inativos():
+    """
+    A cada 1 minuto varre os tópicos ativos.
+    - Prefixo "1 -" → sistemas  → envia SectorSelectView (mesmo fluxo do !sistema)
+    - Prefixo "2 -" → TI        → envia LogsFormView (mesmo fluxo do !logs)
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=AUTO_INACTIVITY_HOURS)
+    handled = _load_handled()
+    changed = False
+
+    for guild_id in config.SERVIDORES.keys():
+        guild = bot.get_guild(guild_id)
+        if guild is None:
+            continue
+
+        try:
+            threads = guild.threads
+        except Exception:
+            threads = []
+
+        for thread in threads:
+            try:
+                if thread.archived or thread.id in handled:
+                    continue
+
+                name = thread.name.strip()
+                if not (name.startswith("1 -") or name.startswith("2 -")):
+                    continue
+
+                ultima = await _ultima_atividade(thread)
+                if ultima > cutoff:
+                    continue
+
+                print(f"[AUTO-CLOSE] Inativo: '{thread.name}' ({thread.id})")
+
+                if name.startswith("1 -"):
+                    await _auto_fechar_sistemas(thread, guild)
+                elif name.startswith("2 -"):
+                    await ti_module.auto_fechar_ti(thread, guild)
+
+                handled.add(thread.id)
+                changed = True
+
+            except discord.NotFound:
+                handled.add(thread.id)
+                changed = True
+            except discord.Forbidden:
+                print(f"[AUTO-CLOSE] Sem permissão: {thread.id}")
+            except Exception as e:
+                print(f"[AUTO-CLOSE] Erro em {thread.id}: {e}")
+
+    if changed:
+        _save_handled(handled)
+
+
+async def _auto_fechar_sistemas(thread: discord.Thread, guild: discord.Guild) -> None:
+    """
+    Tópico de sistemas inativo por 24h.
+    Remove membros não-autorizados e exibe o SectorSelectView para o staff
+    finalizar o chamado (mesmo fluxo do !sistema).
+    """
+    from modules.sistemas._engine import PENDING_PAYLOADS, _allowed_roles, _member_has_role
+    from modules.sistemas._command import SectorSelectView
+
+    allowed = _allowed_roles(guild.id)
+
+    # Remove membros sem cargo autorizado (replica o !sistema)
+    try:
+        await thread.fetch_members()
+    except Exception:
+        pass
+    for tm in thread.members:
+        try:
+            member = guild.get_member(tm.id)
+            if member is None:
+                member = await guild.fetch_member(tm.id)
+            if member.bot:
+                continue
+            if not _member_has_role(member, allowed):
+                await thread.remove_user(member)
+        except Exception:
+            pass
+
+    await thread.send(
+        "⏰ Este chamado atingiu **24 horas de inatividade**.\n"
+        "Por favor, finalize o atendimento selecionando o setor abaixo."
+    )
+
+    if thread.id in PENDING_PAYLOADS:
+        view = SectorSelectView(guild_id=guild.id, thread_id=thread.id)
+        await thread.send(
+            "Selecione o **Setor do colaborador** para encaminhar ao N8N:",
+            view=view,
+        )
+    else:
+        await thread.send(
+            "⚠️ Nenhum payload pendente para este tópico (já enviado ou não inicializado)."
+        )
+    print(f"[AUTO-CLOSE] Formulário de sistemas enviado em '{thread.name}' ({thread.id})")
+
+
+@auto_fechar_inativos.before_loop
+async def before_auto_fechar():
+    await bot.wait_until_ready()
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Menu principal
 # ─────────────────────────────────────────────────────────────────────────────
 
 class MainMenuView(discord.ui.View):
-    """
-    View fixada no canal unificado.
-    Ordem dos botões: Sistemas | Equipamentos | Recuperar Contato | Reembolso
-    """
-
     def __init__(self):
         super().__init__(timeout=None)
 
-    # ── Sistemas ──────────────────────────────────────────────────────────────
     @discord.ui.button(
         label="⚙️ Sistemas",
         style=discord.ButtonStyle.primary,
@@ -57,7 +205,6 @@ class MainMenuView(discord.ui.View):
             ephemeral=True,
         )
 
-    # ── Equipamentos ──────────────────────────────────────────────────────────
     @discord.ui.button(
         label="🖥️ Equipamentos",
         style=discord.ButtonStyle.danger,
@@ -81,7 +228,6 @@ class MainMenuView(discord.ui.View):
             ephemeral=True,
         )
 
-    # ── Recuperar Contato ─────────────────────────────────────────────────────
     @discord.ui.button(
         label="📞 Recuperar Contato",
         style=discord.ButtonStyle.success,
@@ -91,7 +237,6 @@ class MainMenuView(discord.ui.View):
     async def contato_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(contato_module.ContatoModal())
 
-    # ── Solicitação de Reembolso ──────────────────────────────────────────────
     @discord.ui.button(
         label="📋 Solicitação de Reembolso",
         style=discord.ButtonStyle.secondary,
@@ -115,7 +260,6 @@ class MainMenuView(discord.ui.View):
 
 
 def _build_menu_embed() -> discord.Embed:
-    """Cria o embed do menu principal. Atualize ao adicionar módulos."""
     embed = discord.Embed(
         title="Central de Atendimento",
         description=(
@@ -125,7 +269,6 @@ def _build_menu_embed() -> discord.Embed:
         ),
         color=discord.Color.blurple(),
     )
-
     embed.add_field(
         name="⚙️ Sistemas",
         value=(
@@ -138,7 +281,6 @@ def _build_menu_embed() -> discord.Embed:
         ),
         inline=False,
     )
-
     embed.add_field(
         name="🖥️ Equipamentos",
         value=(
@@ -149,7 +291,6 @@ def _build_menu_embed() -> discord.Embed:
         ),
         inline=False,
     )
-
     embed.add_field(
         name="📞 Recuperar Contato",
         value=(
@@ -159,7 +300,6 @@ def _build_menu_embed() -> discord.Embed:
         ),
         inline=False,
     )
-
     embed.add_field(
         name="📋 Solicitação de Reembolso",
         value=(
@@ -170,7 +310,6 @@ def _build_menu_embed() -> discord.Embed:
         ),
         inline=False,
     )
-
     embed.set_footer(text="Em caso de dúvidas, abra um chamado e nossa equipe te ajuda.")
     return embed
 
@@ -180,11 +319,6 @@ def _build_menu_embed() -> discord.Embed:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def setup_modules() -> None:
-    """
-    Registra todos os comandos dos módulos no bot.
-    Chamado UMA vez em __main__, antes de bot.run().
-    NÃO inicie tasks aqui — faça isso no on_ready().
-    """
     ti_module.setup(bot)
     contato_module.setup(bot)
     sistemas_module.setup(bot)
@@ -198,15 +332,16 @@ def setup_modules() -> None:
 async def on_ready():
     print(f"✅ Bot conectado como {bot.user} (ID: {bot.user.id})")
 
-    # Registra views persistentes (botões funcionam após reinício)
     bot.add_view(MainMenuView())
     bot.add_view(ti_module.UrgenciaView())
     bot.add_view(sistemas_module.ServicesView())
 
-    # Inicia tasks que precisam do event loop (só aqui, nunca em setup_modules)
     contato_module.start_tasks()
 
-    # Envia (ou atualiza) o menu em cada guild configurada
+    if not auto_fechar_inativos.is_running():
+        auto_fechar_inativos.start()
+        print(f"✅ Auto-fechamento iniciado (inatividade: {AUTO_INACTIVITY_HOURS}h).")
+
     for guild_id, srv_cfg in config.SERVIDORES.items():
         nome = srv_cfg.get("nome", str(guild_id))
         canal_id = srv_cfg.get("canal_unificado")
@@ -220,7 +355,6 @@ async def on_ready():
             print(f"[WARN] Canal {canal_id} não encontrado em '{nome}'.")
             continue
 
-        # Remove mensagens antigas do bot
         try:
             async for msg in canal.history(limit=50):
                 if msg.author == bot.user:
@@ -228,7 +362,6 @@ async def on_ready():
         except Exception as e:
             print(f"[WARN] Erro ao limpar histórico em '{nome}': {e}")
 
-        # Posta menu principal
         try:
             mensagem = await canal.send(
                 embed=_build_menu_embed(),
@@ -241,27 +374,26 @@ async def on_ready():
             print(f"[ERROR] Erro ao enviar menu em '{nome}': {e}")
 
 
-
 @bot.command(name="help")
 async def help_cmd(ctx: commands.Context):
-    """Lista os comandos disponíveis para a equipe."""
     embed = discord.Embed(
         title="📖 Comandos disponíveis",
-        description="Estes comandos são usados **dentro dos tópicos** abertos pelos colaboradores. Use-os para encerrar o atendimento corretamente.",
+        description=(
+            "Estes comandos são usados **dentro dos tópicos** abertos pelos colaboradores. "
+            "Use-os para encerrar o atendimento corretamente."
+        ),
         color=discord.Color.blurple(),
     )
-
     embed.add_field(
         name="🖥️ `!logs`",
         value=(
             "Usado dentro de um tópico de **Equipamentos/T.I.**\n"
             "Remove o colaborador do tópico, abre um formulário para você preencher "
-            "(empresa, tipo do problema e nível real), gera um arquivo de log com todo "
-            "o histórico da conversa e envia os dados para o sistema. O tópico é apagado automaticamente ao final."
+            "(empresa e nível real), gera um arquivo de log com todo o histórico "
+            "e envia os dados para o sistema. O tópico é apagado automaticamente ao final."
         ),
         inline=False,
     )
-
     embed.add_field(
         name="⚙️ `!sistema`",
         value=(
@@ -271,7 +403,6 @@ async def help_cmd(ctx: commands.Context):
         ),
         inline=False,
     )
-
     embed.add_field(
         name="📞 `!contato`",
         value=(
@@ -281,7 +412,6 @@ async def help_cmd(ctx: commands.Context):
         ),
         inline=False,
     )
-
     embed.set_footer(text="Todos os comandos só funcionam dentro dos tópicos correspondentes.")
     await ctx.reply(embed=embed, mention_author=False)
 
@@ -291,7 +421,6 @@ async def on_message(message: discord.Message):
     if message.author == bot.user:
         return
 
-    # Apaga qualquer mensagem enviada no canal do menu
     if message.guild:
         srv_cfg = config.SERVIDORES.get(message.guild.id, {})
         if message.channel.id == srv_cfg.get("canal_unificado"):

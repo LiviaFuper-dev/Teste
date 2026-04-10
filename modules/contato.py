@@ -9,7 +9,7 @@ Fluxo:
   - Task de inatividade: a cada 60s verifica threads sem atividade e envia aviso
   - !contato: remove TARGET_USER_ID, envia mensagem de conclusão, agenda delete
 
-Numeração: 2 — todos os tópicos abrem como "2 - NomeDoUsuário"
+Numeração: 2 — todos os tópicos abrem como "3 - NomeDoUsuário"
 """
 
 import asyncio
@@ -205,7 +205,7 @@ async def _criar_thread_contato(
         return
 
     # ── 3. Cria a thread ───────────────────────────────────────────────────────
-    thread_name = f"2 - {interaction.user.display_name}"
+    thread_name = f"3 - {interaction.user.display_name}"
     try:
         thread = await channel.create_thread(
             name=thread_name,
@@ -326,7 +326,7 @@ def setup(bot: commands.Bot) -> None:
                 pass
             return
 
-        if not ctx.channel.name.startswith("2 -"):
+        if not ctx.channel.name.startswith("3 -"):
             try:
                 await ctx.author.send(
                     "O comando `!contato` só pode ser usado em tópicos de contato."

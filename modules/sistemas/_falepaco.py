@@ -4,13 +4,13 @@ _falepaco.py — Sistema Falepaco.
 Fluxo:
   Usuário clica "Falepaco" → ephemeral FalepacoView (some após escolha)
 
-  → "Baixar Falepaco"   → thread "3 - Falepaco - {usuario}" + pinga cargo TI
+  → "Baixar Falepaco"   → thread "1 - Falepaco - {usuario}" + pinga cargo TI
                            payload inicializado → enviado via !sistema
 
   → "Dúvidas com senha" → ephemeral orientando a chamar o gestor (some em 15s)
                            payload enviado imediatamente ao N8N (sem thread)
 
-  → "Outros"            → thread "3 - Falepaco - {usuario}" + pinga cargo TI
+  → "Outros"            → thread "1 - Falepaco - {usuario}" + pinga cargo TI
                            payload inicializado → enviado via !sistema
 """
 
@@ -56,7 +56,7 @@ class FalepacoView(discord.ui.View):
 
         try:
             thread = await channel.create_thread(
-                name=f"3 - Falepaco - {user.display_name}",
+                name=f"1 - Falepaco - {user.display_name}",
                 type=discord.ChannelType.private_thread,
                 auto_archive_duration=config.THREAD_AUTO_ARCHIVE_MINUTES,
             )

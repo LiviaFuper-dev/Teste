@@ -2,7 +2,7 @@
 _3cplus.py — Sistema 3c+.
 
 Fluxo:
-  Usuário clica "3c+" no ServicesView → thread "3 - 3c+ - {usuario}"
+  Usuário clica "3c+" no ServicesView → thread "1 - 3c+ - {usuario}"
   → pinga o cargo responsável
   → TI digita !sistema → payload enviado ao N8N
 """
@@ -30,7 +30,7 @@ async def _abrir_3cplus(interaction: discord.Interaction) -> None:
 
     try:
         thread = await channel.create_thread(
-            name=f"3 - 3c+ - {user.display_name}",
+            name=f"1 - 3c+ - {user.display_name}",
             type=discord.ChannelType.private_thread,
             auto_archive_duration=config.THREAD_AUTO_ARCHIVE_MINUTES,
         )

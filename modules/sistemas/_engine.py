@@ -269,9 +269,11 @@ class ProblemTypeView(discord.ui.View):
         if tipo == "permissao_cadastro":
             await _disable_view(interaction, self)
             await interaction.response.defer()
-            await _ping_role(
-                thread, interaction.guild, cfg["role_id"],
-                f"🔐 O usuário informou problema de permissão/cadastro, chamando equipe {self.sistema}:",
+
+            pergunta = _get_pergunta(self.sistema, cfg["steps"][0])
+            await thread.send(
+                pergunta,
+                view=DiagnosticoView(self.sistema, 0, self.original_user_id),
             )
             return
 

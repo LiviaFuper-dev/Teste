@@ -61,7 +61,7 @@ class RobosDescricaoModal(discord.ui.Modal):
         # ── Cria a thread ──────────────────────────────────────────────────────
         try:
             thread = await channel.create_thread(
-                name=f"3 - Robôs/{self.opcao} - {user.display_name}",
+                name=f"1 - Robôs/{self.opcao} - {user.display_name}",
                 type=discord.ChannelType.private_thread,
                 auto_archive_duration=config.THREAD_AUTO_ARCHIVE_MINUTES,
             )

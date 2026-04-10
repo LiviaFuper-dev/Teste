@@ -95,7 +95,7 @@ async def _handle_modal_submit(
 
     try:
         thread = await channel.create_thread(
-            name=f"3 - {sistema} - {user.display_name}",
+            name=f"1 - {sistema} - {user.display_name}",
             type=discord.ChannelType.private_thread,
             auto_archive_duration=config.THREAD_AUTO_ARCHIVE_MINUTES,
         )
