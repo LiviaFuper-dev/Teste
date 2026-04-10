@@ -11,6 +11,7 @@ Auto-fechamento por inatividade:
 from __future__ import annotations
 
 import json
+import random
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -77,7 +78,7 @@ async def _ultima_atividade(thread: discord.Thread) -> datetime:
     return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
 
 
-@tasks.loop(hours=24)
+@tasks.loop(minutes=10)
 async def auto_fechar_inativos():
     """
     A cada 1 minuto varre os tópicos ativos.
@@ -136,15 +137,13 @@ async def auto_fechar_inativos():
 async def _auto_fechar_sistemas(thread: discord.Thread, guild: discord.Guild) -> None:
     """
     Tópico de sistemas inativo por 24h.
-    Remove membros não-autorizados e exibe o SectorSelectView para o staff
-    finalizar o chamado (mesmo fluxo do !sistema).
+    Fecha automaticamente: envia payload pro N8N e deleta a thread.
     """
-    from modules.sistemas._engine import PENDING_PAYLOADS, _allowed_roles, _member_has_role
-    from modules.sistemas._command import SectorSelectView
+    from modules.sistemas._engine import _allowed_roles, _member_has_role, pop_payload, _send_to_n8n
 
     allowed = _allowed_roles(guild.id)
 
-    # Remove membros sem cargo autorizado (replica o !sistema)
+    # Remove membros sem cargo autorizado
     try:
         await thread.fetch_members()
     except Exception:
@@ -163,20 +162,28 @@ async def _auto_fechar_sistemas(thread: discord.Thread, guild: discord.Guild) ->
 
     await thread.send(
         "⏰ Este chamado atingiu **24 horas de inatividade**.\n"
-        "Por favor, finalize o atendimento selecionando o setor abaixo."
+        "Fechamento automático em andamento..."
     )
 
-    if thread.id in PENDING_PAYLOADS:
-        view = SectorSelectView(guild_id=guild.id, thread_id=thread.id)
-        await thread.send(
-            "Selecione o **Setor do colaborador** para encaminhar ao N8N:",
-            view=view,
-        )
+    # Pega o payload salvo e envia pro N8N
+    payload = pop_payload(thread.id)
+    if payload:
+        setor = random.choice(["Comercial", "Administrativo", "Jurídico", "Financeiro", "RH", "Marketing", "TI", "Todos"])
+        payload["setor"] = setor
+        ok = await _send_to_n8n(payload)
+        if ok:
+            print(f"[AUTO-CLOSE] Payload enviado para N8N: '{thread.name}' (setor: {setor})")
+        else:
+            print(f"[AUTO-CLOSE] Falha ao enviar payload para N8N: '{thread.name}'")
     else:
-        await thread.send(
-            "⚠️ Nenhum payload pendente para este tópico (já enviado ou não inicializado)."
-        )
-    print(f"[AUTO-CLOSE] Formulário de sistemas enviado em '{thread.name}' ({thread.id})")
+        print(f"[AUTO-CLOSE] Nenhum payload pendente para '{thread.name}' ({thread.id})")
+
+    # Deleta a thread
+    try:
+        await thread.delete(reason="Chamado de sistemas fechado por inatividade.")
+        print(f"[AUTO-CLOSE] Tópico '{thread.name}' deletado.")
+    except Exception as e:
+        print(f"[AUTO-CLOSE] Erro ao deletar '{thread.name}': {e}")
 
 
 @auto_fechar_inativos.before_loop
