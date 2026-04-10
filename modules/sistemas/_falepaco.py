@@ -20,7 +20,7 @@ import datetime
 import discord
 
 import config
-from ._engine import PENDING_PAYLOADS, _ping_role, _update_step
+from ._engine import PENDING_PAYLOADS, _ping_role, _update_step, set_payload
 from utils import n8n as n8n_utils
 
 _CARGO_FALEPACO_ID = 1415390806541598831
@@ -78,7 +78,7 @@ class FalepacoView(discord.ui.View):
         except Exception:
             pass
 
-        PENDING_PAYLOADS[thread.id] = {
+        set_payload(thread.id, {
             "event": "topic_created",
             "system": "Falepaco",
             "user_id": user.id,
@@ -95,7 +95,7 @@ class FalepacoView(discord.ui.View):
             "steps": {
                 "opcao": opcao,
             },
-        }
+        })
         print(f"[FALEPACO] Payload inicializado ({opcao}): thread {thread.id}")
         return thread
 

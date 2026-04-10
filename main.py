@@ -33,7 +33,7 @@ intents.guilds = True
 
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
-AUTO_INACTIVITY_HOURS = 1
+AUTO_INACTIVITY_HOURS = 24
 _HANDLED_FILE = Path("data/thread_auto_actions.json")
 _HANDLED_FILE.parent.mkdir(parents=True, exist_ok=True)
 
@@ -77,14 +77,14 @@ async def _ultima_atividade(thread: discord.Thread) -> datetime:
     return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
 
 
-@tasks.loop(minutes=1)
+@tasks.loop(hours=24)
 async def auto_fechar_inativos():
     """
     A cada 1 minuto varre os tópicos ativos.
     - Prefixo "1 -" → sistemas  → envia SectorSelectView (mesmo fluxo do !sistema)
     - Prefixo "2 -" → TI        → envia LogsFormView (mesmo fluxo do !logs)
     """
-    cutoff = datetime.now(timezone.utc) - timedelta(minutes=AUTO_INACTIVITY_HOURS)
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=AUTO_INACTIVITY_HOURS)
     handled = _load_handled()
     changed = False
 

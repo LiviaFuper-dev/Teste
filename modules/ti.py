@@ -12,6 +12,7 @@ Fluxo:
 import io
 import asyncio
 import datetime
+import random
 import discord
 from discord.ext import commands
 
@@ -348,12 +349,14 @@ async def _process_and_finalize(
     logs_canal = guild.get_channel(canal_logs_id) if canal_logs_id else None
 
     if not logs_canal:
-        try:
-            await interaction.followup.send(
-                "⚠️ Canal de logs não encontrado. Verifique `config.py`.", ephemeral=True
-            )
-        except Exception:
-            pass
+        if interaction:
+            try:
+                await interaction.followup.send(
+                    "⚠️ Canal de logs não encontrado. Verifique `config.py`.", ephemeral=True
+                )
+            except Exception:
+                pass
+        print(f"[TI] Canal de logs não encontrado (guild {guild.id})")
         return
 
     log_file = discord.File(
@@ -367,12 +370,13 @@ async def _process_and_finalize(
         print(f"[TI] Log enviado para #{logs_canal.name}")
     except Exception as e:
         print(f"[TI] Erro ao enviar log: {e}")
-        try:
-            await interaction.followup.send(
-                f"⚠️ Não foi possível enviar o log: {e}", ephemeral=True
-            )
-        except Exception:
-            pass
+        if interaction:
+            try:
+                await interaction.followup.send(
+                    f"⚠️ Não foi possível enviar o log: {e}", ephemeral=True
+                )
+            except Exception:
+                pass
         return
 
     # 3. Envia dados para o N8N
@@ -400,9 +404,15 @@ async def _process_and_finalize(
     if failed:
         summary += f" Falhas: {len(failed)} (veja terminal)."
 
-    try:
-        await interaction.followup.send(summary)
-    except Exception:
+    if interaction:
+        try:
+            await interaction.followup.send(summary)
+        except Exception:
+            try:
+                await channel.send(summary)
+            except Exception:
+                pass
+    else:
         try:
             await channel.send(summary)
         except Exception:
@@ -423,29 +433,46 @@ async def _process_and_finalize(
 async def auto_fechar_ti(thread: discord.Thread, guild: discord.Guild) -> None:
     """
     Tópico de TI inativo por 24h.
-    Remove membros sem cargo TI e exibe o LogsFormView para o staff
-    finalizar o chamado (mesmo fluxo do !logs).
+    Fecha automaticamente: gera logs, envia N8N e deleta a thread.
     """
     cargo_ti = _get_cargo_ti(guild, guild.id)
     if not cargo_ti:
         print(f"[TI-AUTO] Cargo TI não encontrado para guild {guild.id}")
         return
 
-    # Remove membros sem cargo TI (replica o !logs)
+    cfg = _ti_cfg(guild.id)
+
+    # Remove membros sem cargo TI
     allowed = {cargo_ti.id}
     await remove_members_except(thread, guild, allowed)
 
     await thread.send(
         "⏰ Este chamado atingiu **24 horas de inatividade**.\n"
-        "Por favor, finalize o atendimento preenchendo o formulário abaixo."
+        "Fechamento automático em andamento..."
     )
 
-    view = LogsFormView(guild_id=guild.id, timeout=None)
-    await thread.send(
-        "Selecione **Empresa** e **Nível** e clique em **Confirmar**.",
-        view=view,
-    )
-    print(f"[TI-AUTO] Formulário de logs enviado em '{thread.name}' ({thread.id})")
+    # Valores automáticos
+    empresa = random.choice(["Fuper", "Mlr Advogados"])
+    nivel = random.choice(["Baixo", "Médio", "Alto"])
+
+    form_response = {
+        "empresa": empresa,
+        "nivel_real_problema": nivel,
+        "confirmado_por": "Auto-fechamento (inatividade)",
+    }
+
+    try:
+        await _process_and_finalize(
+            interaction=None,
+            guild=guild,
+            channel=thread,
+            cfg=cfg,
+            cargo_ti=cargo_ti,
+            form_response=form_response,
+        )
+        print(f"[TI-AUTO] Tópico '{thread.name}' fechado automaticamente.")
+    except Exception as e:
+        print(f"[TI-AUTO] Erro ao fechar automaticamente: {e}")
 
 
 # ── Registro do comando !logs ─────────────────────────────────────────────────

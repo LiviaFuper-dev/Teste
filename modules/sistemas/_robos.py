@@ -18,7 +18,7 @@ import datetime
 import discord
 
 import config
-from ._engine import PENDING_PAYLOADS, _ping_role, _update_step
+from ._engine import PENDING_PAYLOADS, _ping_role, _update_step, set_payload
 from ._robo_inss import iniciar_fluxo_inss
 from ._robos_chatguru import iniciar_fluxo_chatguru
 
@@ -84,7 +84,7 @@ class RobosDescricaoModal(discord.ui.Modal):
             pass
 
         # ── Inicializa payload base ────────────────────────────────────────────
-        PENDING_PAYLOADS[thread.id] = {
+        set_payload(thread.id, {
             "event":        "topic_created",
             "system":       "Automações",
             "subsystem":    self.opcao,
@@ -101,7 +101,7 @@ class RobosDescricaoModal(discord.ui.Modal):
             "thread_url":   getattr(thread, "jump_url", None),
             "timestamp":    datetime.datetime.utcnow().isoformat() + "Z",
             "steps":        {},
-        }
+        })
         _update_step(thread.id, "descricao_inicial", descricao)
         print(f"[ROBOS] Payload inicializado: thread {thread.id} subsystem={self.opcao}")
 

@@ -12,7 +12,7 @@ import datetime
 import discord
 
 import config
-from ._engine import PENDING_PAYLOADS, _ping_role
+from ._engine import PENDING_PAYLOADS, _ping_role, set_payload
 
 _CARGO_3CPLUS_ID = 1484627219518062864
 
@@ -52,7 +52,7 @@ async def _abrir_3cplus(interaction: discord.Interaction) -> None:
     except Exception:
         pass
 
-    PENDING_PAYLOADS[thread.id] = {
+    set_payload(thread.id, {
         "event": "topic_created",
         "system": "3c+",
         "user_id": user.id,
@@ -67,7 +67,7 @@ async def _abrir_3cplus(interaction: discord.Interaction) -> None:
         "thread_url": getattr(thread, "jump_url", None),
         "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
         "steps": {},
-    }
+    })
     print(f"[3CPLUS] Payload inicializado: thread {thread.id}")
 
     await _ping_role(

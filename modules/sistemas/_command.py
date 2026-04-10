@@ -16,6 +16,7 @@ from ._engine import (
     _allowed_roles,
     _member_has_role,
     _send_to_n8n,
+    pop_payload,
 )
 
 
@@ -64,7 +65,7 @@ class SectorSelectView(discord.ui.View):
         selected = self._select.values[0] if self._select.values else None
         await interaction.response.defer(ephemeral=True)
 
-        payload = PENDING_PAYLOADS.pop(self.thread_id, None)
+        payload = pop_payload(self.thread_id)
         if payload is None:
             await interaction.followup.send(
                 "Payload não encontrado (já enviado?).", ephemeral=True

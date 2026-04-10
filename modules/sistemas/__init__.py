@@ -18,7 +18,7 @@ import discord
 from discord.ext import commands
 
 import config
-from ._engine import SISTEMAS_CONFIG, PENDING_PAYLOADS, ProblemTypeView, _ping_role
+from ._engine import SISTEMAS_CONFIG, PENDING_PAYLOADS, ProblemTypeView, _ping_role, set_payload
 from ._chatguru import ChatGuruFourthView
 from ._whom import WhomWarningView
 from ._email import _criar_thread_email
@@ -143,7 +143,7 @@ async def _handle_modal_submit(
     except Exception as e:
         print(f"[SISTEMAS] Erro ao enviar mensagens na thread: {e}")
 
-    PENDING_PAYLOADS[thread.id] = {
+    set_payload(thread.id, {
         "event": "topic_created",
         "system": sistema,
         "description": descricao,
@@ -159,7 +159,7 @@ async def _handle_modal_submit(
         "thread_url": getattr(thread, "jump_url", None),
         "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
         "steps": {},
-    }
+    })
     print(f"[SISTEMAS] Payload pendente salvo: thread {thread.id}")
 
     await interaction.followup.send("Tópico criado! Acesse-o para continuar.", ephemeral=True)

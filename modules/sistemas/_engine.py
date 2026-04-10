@@ -9,6 +9,8 @@ Contém:
 """
 
 import asyncio
+import json
+import os
 from typing import Optional
 
 import discord
@@ -18,7 +20,52 @@ import requests
 import config
 
 # ── Estado compartilhado ──────────────────────────────────────────────────────
+_PAYLOADS_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "data", "pending_payloads.json")
 PENDING_PAYLOADS: dict[int, dict] = {}
+
+
+def _load_payloads() -> None:
+    """Carrega payloads do disco para a memória."""
+    global PENDING_PAYLOADS
+    try:
+        with open(_PAYLOADS_FILE, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        # JSON salva chaves como string, converter de volta para int
+        PENDING_PAYLOADS = {int(k): v for k, v in raw.items()}
+        print(f"[PAYLOADS] {len(PENDING_PAYLOADS)} payload(s) carregado(s) do disco.")
+    except FileNotFoundError:
+        PENDING_PAYLOADS = {}
+    except Exception as e:
+        print(f"[PAYLOADS] Erro ao carregar payloads: {e}")
+        PENDING_PAYLOADS = {}
+
+
+def _save_payloads() -> None:
+    """Persiste payloads da memória para o disco."""
+    try:
+        os.makedirs(os.path.dirname(_PAYLOADS_FILE), exist_ok=True)
+        with open(_PAYLOADS_FILE, "w", encoding="utf-8") as f:
+            json.dump(PENDING_PAYLOADS, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[PAYLOADS] Erro ao salvar payloads: {e}")
+
+
+def set_payload(thread_id: int, payload: dict) -> None:
+    """Adiciona um payload e persiste no disco."""
+    PENDING_PAYLOADS[thread_id] = payload
+    _save_payloads()
+
+
+def pop_payload(thread_id: int) -> dict | None:
+    """Remove e retorna um payload, persistindo a remoção."""
+    payload = PENDING_PAYLOADS.pop(thread_id, None)
+    if payload is not None:
+        _save_payloads()
+    return payload
+
+
+# Carregar payloads salvos ao importar o módulo
+_load_payloads()
 
 _STEPS_PADRAO = [
     {
@@ -80,6 +127,7 @@ def _update_step(thread_id: int, key: str, value: str) -> None:
     payload = PENDING_PAYLOADS.get(thread_id)
     if payload is not None:
         payload.setdefault("steps", {})[key] = value
+        _save_payloads()
 
 
 def _get_pergunta(sistema: str, step: dict) -> str:

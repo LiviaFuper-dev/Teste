@@ -21,7 +21,7 @@ import datetime
 import discord
 
 import config
-from ._engine import PENDING_PAYLOADS, _disable_view, _ping_role, _update_step
+from ._engine import PENDING_PAYLOADS, _disable_view, _ping_role, _update_step, set_payload
 
 
 def _detectar_role_id(email: str) -> int:
@@ -168,7 +168,7 @@ async def _criar_thread_email(interaction: discord.Interaction) -> None:
     except Exception:
         pass
 
-    PENDING_PAYLOADS[thread.id] = {
+    set_payload(thread.id, {
         "event":        "topic_created",
         "system":       "E-mail",
         "user_id":      user.id,
@@ -183,7 +183,7 @@ async def _criar_thread_email(interaction: discord.Interaction) -> None:
         "thread_url":   getattr(thread, "jump_url", None),
         "timestamp":    datetime.datetime.utcnow().isoformat() + "Z",
         "steps": {},
-    }
+    })
     print(f"[EMAIL] Payload inicializado: thread {thread.id}")
 
     try:
