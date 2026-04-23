@@ -11,7 +11,6 @@ Auto-fechamento por inatividade:
 from __future__ import annotations
 
 import json
-import random
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -34,7 +33,7 @@ intents.guilds = True
 
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
-AUTO_INACTIVITY_HOURS = 24
+AUTO_INACTIVITY_HOURS = 12
 _HANDLED_FILE = Path("data/thread_auto_actions.json")
 _HANDLED_FILE.parent.mkdir(parents=True, exist_ok=True)
 
@@ -168,22 +167,21 @@ async def _auto_fechar_sistemas(thread: discord.Thread, guild: discord.Guild) ->
     # Pega o payload salvo e envia pro N8N
     payload = pop_payload(thread.id)
     if payload:
-        setor = random.choice(["Comercial", "Administrativo", "Jurídico", "Financeiro", "RH", "Marketing", "TI", "Todos"])
-        payload["setor"] = setor
+        payload["auto_close"] = True
         ok = await _send_to_n8n(payload)
         if ok:
-            print(f"[AUTO-CLOSE] Payload enviado para N8N: '{thread.name}' (setor: {setor})")
+            print(f"[AUTO-CLOSE] Payload enviado para N8N: '{thread.name}'")
         else:
             print(f"[AUTO-CLOSE] Falha ao enviar payload para N8N: '{thread.name}'")
     else:
         print(f"[AUTO-CLOSE] Nenhum payload pendente para '{thread.name}' ({thread.id})")
 
-    # Deleta a thread
+    # Arquiva a thread (não deleta)
     try:
-        await thread.delete(reason="Chamado de sistemas fechado por inatividade.")
-        print(f"[AUTO-CLOSE] Tópico '{thread.name}' deletado.")
+        await thread.edit(archived=True, reason="Chamado de sistemas arquivado por inatividade.")
+        print(f"[AUTO-CLOSE] Tópico '{thread.name}' arquivado.")
     except Exception as e:
-        print(f"[AUTO-CLOSE] Erro ao deletar '{thread.name}': {e}")
+        print(f"[AUTO-CLOSE] Erro ao arquivar '{thread.name}': {e}")
 
 
 @auto_fechar_inativos.before_loop

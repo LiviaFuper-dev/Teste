@@ -12,7 +12,6 @@ Fluxo:
 import io
 import asyncio
 import datetime
-import random
 import discord
 from discord.ext import commands
 
@@ -420,12 +419,12 @@ async def _process_and_finalize(
 
     print(f"[TI] Removidos: {removed} | Falhas: {failed}")
 
-    # 5. Deleta o tópico
+    # 5. Arquiva o tópico (não deleta, para teste)
     try:
-        await channel.delete(reason="Chamado TI finalizado — log gerado.")
-        print(f"[TI] Tópico '{channel.name}' deletado.")
+        await channel.edit(archived=True, reason="Chamado TI finalizado — log gerado.")
+        print(f"[TI] Tópico '{channel.name}' arquivado.")
     except Exception as e:
-        print(f"[TI] Erro ao deletar tópico: {e}")
+        print(f"[TI] Erro ao arquivar tópico: {e}")
 
 
 # ── Auto-fechamento por inatividade (chamado pelo main.py) ────────────────────
@@ -451,14 +450,9 @@ async def auto_fechar_ti(thread: discord.Thread, guild: discord.Guild) -> None:
         "Fechamento automático em andamento..."
     )
 
-    # Valores automáticos
-    empresa = random.choice(["Fuper", "Mlr Advogados"])
-    nivel = random.choice(["Baixo", "Médio", "Alto"])
-
     form_response = {
-        "empresa": empresa,
-        "nivel_real_problema": nivel,
         "confirmado_por": "Auto-fechamento (inatividade)",
+        "auto_close": True,
     }
 
     try:
@@ -470,9 +464,9 @@ async def auto_fechar_ti(thread: discord.Thread, guild: discord.Guild) -> None:
             cargo_ti=cargo_ti,
             form_response=form_response,
         )
-        print(f"[TI-AUTO] Tópico '{thread.name}' fechado automaticamente.")
+        print(f"[TI-AUTO] Tópico '{thread.name}' processado automaticamente.")
     except Exception as e:
-        print(f"[TI-AUTO] Erro ao fechar automaticamente: {e}")
+        print(f"[TI-AUTO] Erro ao processar automaticamente: {e}")
 
 
 # ── Registro do comando !logs ─────────────────────────────────────────────────
