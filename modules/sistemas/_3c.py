@@ -14,7 +14,7 @@ import discord
 import config
 from ._engine import PENDING_PAYLOADS, _ping_role, set_payload
 
-_CARGO_3CPLUS_ID = 1484627219518062864
+_CARGO_3CPLUS_ID = config.TRESCEPLUS_ROLE_ID
 
 
 async def _abrir_3cplus(interaction: discord.Interaction) -> None:

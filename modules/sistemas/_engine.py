@@ -208,7 +208,15 @@ async def _send_to_n8n(payload: dict) -> bool:
 
 def _allowed_roles(guild_id: int) -> set[int]:
     cfg = config.SERVIDORES.get(guild_id, {}).get("sistemas", {})
-    roles = {config.CHATGURU_ROLE_ID, config.WHOM_ROLE_ID, config.CLICKUP_SUPPORT_ROLE_ID}
+    roles = {
+        config.CHATGURU_ROLE_ID,
+        config.WHOM_ROLE_ID,
+        config.CLICKUP_SUPPORT_ROLE_ID,
+        config.EMAIL_MLR_ROLE_ID,
+        config.EMAIL_GMAIL_ROLE_ID,
+        config.TRESCEPLUS_ROLE_ID,
+        config.ADMIN_EXTRA_ROLE_ID,
+    }
     cargo_ti = cfg.get("cargo_ti")
     if cargo_ti:
         roles.add(int(cargo_ti))

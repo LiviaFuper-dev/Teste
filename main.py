@@ -34,6 +34,7 @@ intents.guilds = True
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 AUTO_INACTIVITY_HOURS = 12
+AUTO_CONTATO_INACTIVITY_HOURS = 72  # 3 dias
 _HANDLED_FILE = Path("data/thread_auto_actions.json")
 _HANDLED_FILE.parent.mkdir(parents=True, exist_ok=True)
 
@@ -77,6 +78,19 @@ async def _ultima_atividade(thread: discord.Thread) -> datetime:
     return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
 
 
+async def _ultima_atividade_humana(thread: discord.Thread) -> datetime:
+    """Retorna o datetime da última mensagem de um humano (ignora bots)."""
+    try:
+        async for msg in thread.history(limit=50):
+            if not msg.author.bot:
+                ts = msg.created_at
+                return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+    except Exception:
+        pass
+    ts = thread.created_at or datetime.now(timezone.utc)
+    return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+
+
 @tasks.loop(minutes=10)
 async def auto_fechar_inativos():
     """
@@ -104,12 +118,18 @@ async def auto_fechar_inativos():
                     continue
 
                 name = thread.name.strip()
-                if not (name.startswith("1 -") or name.startswith("2 -")):
+                if not (name.startswith("1 -") or name.startswith("2 -") or name.startswith("3 -")):
                     continue
 
-                ultima = await _ultima_atividade(thread)
-                if ultima > cutoff:
-                    continue
+                if name.startswith("3 -"):
+                    contato_cutoff = datetime.now(timezone.utc) - timedelta(hours=AUTO_CONTATO_INACTIVITY_HOURS)
+                    ultima = await _ultima_atividade_humana(thread)
+                    if ultima > contato_cutoff:
+                        continue
+                else:
+                    ultima = await _ultima_atividade(thread)
+                    if ultima > cutoff:
+                        continue
 
                 print(f"[AUTO-CLOSE] Inativo: '{thread.name}' ({thread.id})")
 
@@ -117,6 +137,8 @@ async def auto_fechar_inativos():
                     await _auto_fechar_sistemas(thread, guild)
                 elif name.startswith("2 -"):
                     await ti_module.auto_fechar_ti(thread, guild)
+                elif name.startswith("3 -"):
+                    await _auto_fechar_contato(thread)
 
                 handled.add(thread.id)
                 changed = True
@@ -182,6 +204,21 @@ async def _auto_fechar_sistemas(thread: discord.Thread, guild: discord.Guild) ->
         print(f"[AUTO-CLOSE] Tópico '{thread.name}' arquivado.")
     except Exception as e:
         print(f"[AUTO-CLOSE] Erro ao arquivar '{thread.name}': {e}")
+
+
+async def _auto_fechar_contato(thread: discord.Thread) -> None:
+    """Tópico de contato inativo por 3 dias. Arquiva automaticamente."""
+    from modules.contato import _THREAD_ACTIVITY
+    _THREAD_ACTIVITY.pop(thread.id, None)
+
+    await thread.send(
+        "⏰ Este tópico atingiu **3 dias de inatividade** e será arquivado automaticamente."
+    )
+    try:
+        await thread.edit(archived=True, reason="Tópico de contato arquivado por inatividade (3 dias).")
+        print(f"[AUTO-CLOSE] Contato arquivado: '{thread.name}'")
+    except Exception as e:
+        print(f"[AUTO-CLOSE] Erro ao arquivar contato '{thread.name}': {e}")
 
 
 @auto_fechar_inativos.before_loop
