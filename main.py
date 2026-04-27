@@ -34,7 +34,7 @@ intents.guilds = True
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 AUTO_INACTIVITY_HOURS = 12
-AUTO_CONTATO_INACTIVITY_HOURS = 72  # 3 dias
+AUTO_CONTATO_INACTIVITY_HOURS = 48   # 2 dias → deleta o tópico
 _HANDLED_FILE = Path("data/thread_auto_actions.json")
 _HANDLED_FILE.parent.mkdir(parents=True, exist_ok=True)
 
@@ -207,18 +207,20 @@ async def _auto_fechar_sistemas(thread: discord.Thread, guild: discord.Guild) ->
 
 
 async def _auto_fechar_contato(thread: discord.Thread) -> None:
-    """Tópico de contato inativo por 3 dias. Arquiva automaticamente."""
+    """Tópico de contato inativo por 48h. Avisa e deleta."""
     from modules.contato import _THREAD_ACTIVITY
     _THREAD_ACTIVITY.pop(thread.id, None)
 
     await thread.send(
-        "⏰ Este tópico atingiu **3 dias de inatividade** e será arquivado automaticamente."
+        "⏰ Este tópico atingiu **48 horas de inatividade** e será excluído automaticamente."
     )
     try:
-        await thread.edit(archived=True, reason="Tópico de contato arquivado por inatividade (3 dias).")
-        print(f"[AUTO-CLOSE] Contato arquivado: '{thread.name}'")
+        await thread.delete()
+        print(f"[AUTO-CLOSE] Contato deletado: '{thread.name}' ({thread.id})")
+    except discord.NotFound:
+        print(f"[AUTO-CLOSE] Contato {thread.id} já deletado.")
     except Exception as e:
-        print(f"[AUTO-CLOSE] Erro ao arquivar contato '{thread.name}': {e}")
+        print(f"[AUTO-CLOSE] Erro ao deletar contato '{thread.name}': {e}")
 
 
 @auto_fechar_inativos.before_loop
