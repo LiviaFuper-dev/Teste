@@ -75,6 +75,7 @@ SERVIDORES: dict[int, dict] = {
     1407051681421594806: {
         "nome": "MLR",
         "canal_unificado": 1481687593224507554,
+        "modulos_ativos": ["sistemas", "ti", "contato", "reembolso"],
 
         "ti": {
             "cargo_ti":   1415390806541598831,
@@ -92,19 +93,12 @@ SERVIDORES: dict[int, dict] = {
 
     1409995330795081738: {
         "nome": "FUPER",
-        "canal_unificado": None,  # ← preencha com o ID do canal unificado na FUPER
+        "canal_unificado": 1430934934402498742,
+        "modulos_ativos": ["ti"],
 
         "ti": {
             "cargo_ti":   1430932068484780184,
             "canal_logs": 1430935700387270898,
-        },
-
-        "sistemas": {
-            "cargo_ti": 1430932068484780184,
-        },
-
-        "contato": {
-            "keeper_role_id": 1430932068484780184,
         },
     },
 }

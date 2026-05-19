@@ -33,7 +33,7 @@ intents.guilds = True
 
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
-AUTO_INACTIVITY_HOURS = 12
+AUTO_INACTIVITY_HOURS = 24
 AUTO_CONTATO_INACTIVITY_HOURS = 48   # 2 dias → deleta o tópico
 _HANDLED_FILE = Path("data/thread_auto_actions.json")
 _HANDLED_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -98,6 +98,10 @@ async def auto_fechar_inativos():
     - Prefixo "1 -" → sistemas  → envia SectorSelectView (mesmo fluxo do !sistema)
     - Prefixo "2 -" → TI        → envia LogsFormView (mesmo fluxo do !logs)
     """
+    agora = datetime.now(timezone(timedelta(hours=-3)))
+    if agora.weekday() in (5, 6):
+        return
+
     cutoff = datetime.now(timezone.utc) - timedelta(hours=AUTO_INACTIVITY_HOURS)
     handled = _load_handled()
     changed = False
@@ -233,8 +237,20 @@ async def before_auto_fechar():
 # ─────────────────────────────────────────────────────────────────────────────
 
 class MainMenuView(discord.ui.View):
-    def __init__(self):
+    def __init__(self, guild_id: int | None = None):
         super().__init__(timeout=None)
+        modulos = {"sistemas", "ti", "contato", "reembolso"}
+        if guild_id:
+            srv = config.SERVIDORES.get(guild_id, {})
+            modulos = set(srv.get("modulos_ativos", modulos))
+        if "sistemas" not in modulos:
+            self.remove_item(self.sistemas_button)
+        if "ti" not in modulos:
+            self.remove_item(self.ti_button)
+        if "contato" not in modulos:
+            self.remove_item(self.contato_button)
+        if "reembolso" not in modulos:
+            self.remove_item(self.reembolso_button)
 
     @discord.ui.button(
         label="⚙️ Sistemas",
@@ -303,7 +319,11 @@ class MainMenuView(discord.ui.View):
             pass
 
 
-def _build_menu_embed() -> discord.Embed:
+def _build_menu_embed(guild_id: int | None = None) -> discord.Embed:
+    modulos = {"sistemas", "ti", "contato", "reembolso"}
+    if guild_id:
+        srv = config.SERVIDORES.get(guild_id, {})
+        modulos = set(srv.get("modulos_ativos", modulos))
     embed = discord.Embed(
         title="Central de Atendimento",
         description=(
@@ -313,7 +333,8 @@ def _build_menu_embed() -> discord.Embed:
         ),
         color=discord.Color.blurple(),
     )
-    embed.add_field(
+    if "sistemas" in modulos:
+      embed.add_field(
         name="⚙️ Sistemas",
         value=(
             "Problemas com as ferramentas e sistemas que utilizamos no escritório.\n"
@@ -325,7 +346,8 @@ def _build_menu_embed() -> discord.Embed:
         ),
         inline=False,
     )
-    embed.add_field(
+    if "ti" in modulos:
+      embed.add_field(
         name="🖥️ Equipamentos",
         value=(
             "Problemas relacionados ao seu computador ou periféricos.\n"
@@ -335,7 +357,8 @@ def _build_menu_embed() -> discord.Embed:
         ),
         inline=False,
     )
-    embed.add_field(
+    if "contato" in modulos:
+      embed.add_field(
         name="📞 Recuperar Contato",
         value=(
             "Canal para solicitar a recuperação do telefone de um contato.\n"
@@ -344,7 +367,8 @@ def _build_menu_embed() -> discord.Embed:
         ),
         inline=False,
     )
-    embed.add_field(
+    if "reembolso" in modulos:
+      embed.add_field(
         name="📋 Solicitação de Reembolso",
         value=(
             "Gastou com algo necessário para o trabalho no escritório?\n"
@@ -408,8 +432,8 @@ async def on_ready():
 
         try:
             mensagem = await canal.send(
-                embed=_build_menu_embed(),
-                view=MainMenuView(),
+                embed=_build_menu_embed(guild_id),
+                view=MainMenuView(guild_id),
                 silent=True,
             )
             await mensagem.pin()
