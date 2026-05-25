@@ -33,7 +33,7 @@ intents.guilds = True
 
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
-AUTO_INACTIVITY_HOURS = 24
+AUTO_INACTIVITY_HOURS = 36
 AUTO_CONTATO_INACTIVITY_HOURS = 48   # 2 dias → deleta o tópico
 _HANDLED_FILE = Path("data/thread_auto_actions.json")
 _HANDLED_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -142,7 +142,7 @@ async def auto_fechar_inativos():
                 elif name.startswith("2 -"):
                     await ti_module.auto_fechar_ti(thread, guild)
                 elif name.startswith("3 -"):
-                    await _auto_fechar_contato(thread)
+                    await _auto_fechar_contato(thread, guild)
 
                 handled.add(thread.id)
                 changed = True
@@ -186,14 +186,16 @@ async def _auto_fechar_sistemas(thread: discord.Thread, guild: discord.Guild) ->
             pass
 
     await thread.send(
-        "⏰ Este chamado atingiu **24 horas de inatividade**.\n"
+        "⏰ Este chamado atingiu **36 horas de inatividade**.\n"
         "Fechamento automático em andamento..."
     )
 
     # Pega o payload salvo e envia pro N8N
+    from utils.logs import coletar_historico
     payload = pop_payload(thread.id)
     if payload:
         payload["auto_close"] = True
+        payload["conversa"] = await coletar_historico(thread)
         ok = await _send_to_n8n(payload)
         if ok:
             print(f"[AUTO-CLOSE] Payload enviado para N8N: '{thread.name}'")
@@ -202,15 +204,24 @@ async def _auto_fechar_sistemas(thread: discord.Thread, guild: discord.Guild) ->
     else:
         print(f"[AUTO-CLOSE] Nenhum payload pendente para '{thread.name}' ({thread.id})")
 
-    # Arquiva a thread (não deleta)
+    # Envia log da conversa pro canal de logs
+    from utils.logs import enviar_log_conversa
+    canal_logs_id = config.SERVIDORES.get(guild.id, {}).get("canal_logs")
+    if canal_logs_id:
+        await enviar_log_conversa(
+            thread, guild, canal_logs_id,
+            prefixo_log="⚙️",
+            header_extra="=== Auto-fechamento (Sistemas) ===\nMotivo: Inatividade 36h",
+        )
+
     try:
-        await thread.edit(archived=True, reason="Chamado de sistemas arquivado por inatividade.")
-        print(f"[AUTO-CLOSE] Tópico '{thread.name}' arquivado.")
+        await thread.delete()
+        print(f"[AUTO-CLOSE] Tópico '{thread.name}' deletado.")
     except Exception as e:
-        print(f"[AUTO-CLOSE] Erro ao arquivar '{thread.name}': {e}")
+        print(f"[AUTO-CLOSE] Erro ao deletar '{thread.name}': {e}")
 
 
-async def _auto_fechar_contato(thread: discord.Thread) -> None:
+async def _auto_fechar_contato(thread: discord.Thread, guild: discord.Guild) -> None:
     """Tópico de contato inativo por 48h. Avisa e deleta."""
     from modules.contato import _THREAD_ACTIVITY
     _THREAD_ACTIVITY.pop(thread.id, None)

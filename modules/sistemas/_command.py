@@ -11,6 +11,7 @@ import discord
 from discord.ext import commands
 
 import config
+from utils.logs import coletar_historico, enviar_log_conversa
 from ._engine import (
     PENDING_PAYLOADS,
     _allowed_roles,
@@ -73,6 +74,7 @@ class SectorSelectView(discord.ui.View):
             return
 
         payload["setor"] = selected
+        payload["conversa"] = await coletar_historico(interaction.channel)
         ok = await _send_to_n8n(payload)
         if not ok:
             await interaction.followup.send(
@@ -90,6 +92,14 @@ class SectorSelectView(discord.ui.View):
 
         await interaction.followup.send("Encaminhado com sucesso.", ephemeral=True)
         self.stop()
+
+        canal_logs_id = config.SERVIDORES.get(self.guild_id, {}).get("canal_logs")
+        if canal_logs_id:
+            await enviar_log_conversa(
+                thread, interaction.guild, canal_logs_id,
+                prefixo_log="⚙️",
+                header_extra=f"=== Sistemas ===\nSetor: {selected}",
+            )
 
         try:
             await thread.delete()

@@ -392,6 +392,7 @@ async def _process_and_finalize(
             "guild_id":            guild.id,
             "timestamp":           datetime.datetime.utcnow().isoformat() + "Z",
             "motivo":              motivo,
+            "conversa":            log_text,
         }
         await n8n_utils.send(config.N8N_WEBHOOK_TI, payload)
 
@@ -419,12 +420,11 @@ async def _process_and_finalize(
 
     print(f"[TI] Removidos: {removed} | Falhas: {failed}")
 
-    # 5. Arquiva o tópico (não deleta, para teste)
     try:
-        await channel.edit(archived=True, reason="Chamado TI finalizado — log gerado.")
-        print(f"[TI] Tópico '{channel.name}' arquivado.")
+        await channel.delete()
+        print(f"[TI] Tópico '{channel.name}' deletado.")
     except Exception as e:
-        print(f"[TI] Erro ao arquivar tópico: {e}")
+        print(f"[TI] Erro ao deletar tópico: {e}")
 
 
 # ── Auto-fechamento por inatividade (chamado pelo main.py) ────────────────────

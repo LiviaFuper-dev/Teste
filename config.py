@@ -75,6 +75,7 @@ SERVIDORES: dict[int, dict] = {
     1407051681421594806: {
         "nome": "MLR",
         "canal_unificado": 1481687593224507554,
+        "canal_logs": 1429922070036217977,
         "modulos_ativos": ["sistemas", "ti", "contato", "reembolso"],
 
         "ti": {
@@ -94,6 +95,7 @@ SERVIDORES: dict[int, dict] = {
     1409995330795081738: {
         "nome": "FUPER",
         "canal_unificado": 1430934934402498742,
+        "canal_logs": 1430935700387270898,
         "modulos_ativos": ["ti"],
 
         "ti": {

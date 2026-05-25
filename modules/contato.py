@@ -83,6 +83,7 @@ async def _fechar_topico_apos_delay(thread: discord.Thread, guild_id: int):
         if guild and guild.get_thread(thread.id) is None:
             print(f"[CONTATO] Tópico {thread.id} já deletado.")
             return
+
         await thread.delete()
         print(f"[CONTATO] Tópico {thread.id} fechado automaticamente.")
     except discord.NotFound:

@@ -98,6 +98,13 @@ _STEPS_PADRAO = [
             "5 minutos e não resolveu?"
         ),
     },
+    {
+        "step_key": "reinicio_pc",
+        "pergunta_padrao": (
+            "💻 Você já tentou reiniciar o computador? Às vezes um reinício resolve "
+            "problemas de conexão e carregamento do sistema."
+        ),
+    },
 ]
 
 SISTEMAS_CONFIG: dict[str, dict] = {
@@ -293,6 +300,7 @@ class DiagnosticoView(discord.ui.View):
             0: "Ótimo! Fico feliz que tenha resolvido. Se precisar, reabra o chamado.",
             1: "Perfeito, que bom que resolveu! 👍",
             2: "Ótimo, que bom que resolveu!",
+            3: "Boa, reiniciar o PC resolveu! Se precisar, estamos aqui. 💻",
         }
         await interaction.response.send_message(
             msgs.get(self.step_index, "Ótimo, problema resolvido!"), ephemeral=True
