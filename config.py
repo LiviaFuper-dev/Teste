@@ -44,7 +44,7 @@ TRESCEPLUS_ROLE_ID: int      = 1484627219518062864   # 3c+
 ADMIN_EXTRA_ROLE_ID: int     = 1424847269148102656   # Cargo adicional
 
 # ── Módulo Contato ─────────────────────────────────────────────────────────────
-CONTATO_TARGET_USER_ID: int             = 287745016003035137  # pessoa adicionada em todo tópico
+CONTATO_TARGET_ROLE_ID: int             = 1516088193240400054  # cargo mencionado em todo tópico
 CONTATO_INACTIVITY_TIMEOUT_SECONDS: int = 86400                # 24h (use 5 para teste)
 CONTATO_CLOSE_DELAY_SECONDS: int        = 43200                # 12h após !contato (use 3 para teste)
 

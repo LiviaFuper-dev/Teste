@@ -232,24 +232,23 @@ async def _criar_thread_contato(
     except Exception:
         pass
 
-    # Adiciona TARGET_USER_ID
-    target_added = False
-    target_id = config.CONTATO_TARGET_USER_ID
-    if target_id:
+    # Adiciona CONTATO_TARGET_ROLE_ID
+    # feat: [FIX] 15/06 - menciona o cargo de contato na thread, sem adicionar usuário fixo
+    role_id = config.CONTATO_TARGET_ROLE_ID
+    if role_id:
         try:
-            target = guild.get_member(target_id) or await guild.fetch_member(target_id)
-            if target:
-                await thread.add_user(target)
-                target_added = True
+            await thread.send(
+                f"Novo chamado de recuperação de contato! <@&{role_id}>",
+                allowed_mentions=discord.AllowedMentions(roles=True),
+            )
         except Exception as e:
-            print(f"[CONTATO] Não foi possível adicionar TARGET_USER: {e}")
+            print(f"[CONTATO] Não foi possível mencionar CONTATO_TARGET_ROLE_ID: {e}")
 
     # Registra no controle de inatividade
     _THREAD_ACTIVITY[thread.id] = {"last_activity": datetime.datetime.utcnow()}
 
     # Re-envia payload com thread_id para o N8N
     payload["thread_id"]         = thread.id
-    payload["target_user_added"] = target_added
     if n8n_url:
         try:
             import aiohttp
@@ -339,20 +338,7 @@ def setup(bot: commands.Bot) -> None:
         # Remove do controle de inatividade
         _THREAD_ACTIVITY.pop(channel.id, None)
 
-        # Remove TARGET_USER_ID
-        guild = ctx.guild
-        target_id = config.CONTATO_TARGET_USER_ID
-        if guild and target_id:
-            try:
-                target = (
-                    guild.get_member(target_id)
-                    or await guild.fetch_member(target_id)
-                )
-                if target:
-                    await channel.remove_user(target)
-                    print(f"[CONTATO] TARGET_USER {target_id} removido do tópico {channel.id}.")
-            except Exception as e:
-                print(f"[CONTATO] Não foi possível remover TARGET_USER: {e}")
+
 
         # Envia mensagem de conclusão
         try:
