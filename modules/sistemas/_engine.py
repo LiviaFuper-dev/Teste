@@ -9,6 +9,7 @@ Contém:
 """
 
 import asyncio
+import datetime
 import json
 import os
 from typing import Optional
@@ -134,6 +135,7 @@ def _update_step(thread_id: int, key: str, value: str) -> None:
     payload = PENDING_PAYLOADS.get(thread_id)
     if payload is not None:
         payload.setdefault("steps", {})[key] = value
+        payload["last_interaction_at"] = datetime.datetime.utcnow().isoformat() + "Z"
         _save_payloads()
 
 
@@ -228,6 +230,20 @@ def _allowed_roles(guild_id: int) -> set[int]:
     if cargo_ti:
         roles.add(int(cargo_ti))
     return roles
+
+
+def _empresa_clickup(guild_id: int) -> tuple[str | None, str | None]:
+    raw = str(
+        config.SERVIDORES.get(guild_id, {}).get("empresa_clickup")
+        or config.SERVIDORES.get(guild_id, {}).get("nome")
+        or ""
+    ).strip().lower()
+
+    if raw in {"mlr", "mlr_advogados", "mlr advogados"}:
+        return "mlr_advogados", "MLR"
+    if raw in {"fuper"}:
+        return "fuper", "FUPER"
+    return None, None
 
 
 def _member_has_role(member: Optional[discord.Member], role_ids: set[int]) -> bool:

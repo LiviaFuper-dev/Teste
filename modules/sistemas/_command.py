@@ -15,6 +15,7 @@ from utils.logs import coletar_historico, enviar_log_conversa
 from ._engine import (
     PENDING_PAYLOADS,
     _allowed_roles,
+    _empresa_clickup,
     _member_has_role,
     _send_to_n8n,
     pop_payload,
@@ -73,8 +74,33 @@ class SectorSelectView(discord.ui.View):
             )
             return
 
+        # Complementa o payload antes do envio ao N8N/ClickUp.
+        # Em E-mail/Google Drive, alguns dados ficam salvos em steps durante o fluxo;
+        # aqui eles viram campos diretos para facilitar o mapeamento na automação.
+
+        steps = payload.get("steps", {})
+        if payload.get("system") in {"E-mail", "Google Drive"}:
+            email_selecionado = steps.get("email_selecionado") or steps.get("dominio_detectado")
+            payload["email_selecionado"] = email_selecionado
+            payload["email_usuario"] = steps.get("email_usuario")
+            payload["problema_relatado"] = steps.get("problema")
+            print(f"[SISTEMAS] E-mail selecionado para ClickUp: {email_selecionado}")
+
+        empresa_value, empresa_label = _empresa_clickup(self.guild_id)
+        if empresa_value:
+            payload["empresa"] = empresa_value
+            payload["Empresa"] = empresa_label
+            payload["empresa_label"] = empresa_label
+
         payload["setor"] = selected
         payload["conversa"] = await coletar_historico(interaction.channel)
+        if payload.get("system") in {"E-mail", "Google Drive"}:
+            payload["conversa"] += (
+                "\n\n=== Dados do E-mail ===\n"
+                f"E-mail selecionado: {payload.get('email_selecionado') or '-'}\n"
+                f"E-mail informado: {payload.get('email_usuario') or '-'}\n"
+                f"Problema relatado: {payload.get('problema_relatado') or '-'}"
+            )
         ok = await _send_to_n8n(payload)
         if not ok:
             await interaction.followup.send(

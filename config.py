@@ -74,6 +74,8 @@ SERVIDORES: dict[int, dict] = {
 
     1407051681421594806: {
         "nome": "MLR",
+        "empresa_clickup": "mlr_advogados", # Usado para preencher o campo de empresa no payload enviado ao N8N/ClickUp.
+        "canal_chamados_pendentes": 1521930365537615882, # Canal que recebe os cards de chamados inativos.
         "canal_unificado": 1481687593224507554,
         "canal_logs": 1429922070036217977,
         "modulos_ativos": ["sistemas", "ti", "contato", "reembolso"],
@@ -94,6 +96,7 @@ SERVIDORES: dict[int, dict] = {
 
     1409995330795081738: {
         "nome": "FUPER",
+        "empresa_clickup": "fuper", # Usado para preencher o campo de empresa no payload enviado ao N8N/ClickUp.
         "canal_unificado": 1430934934402498742,
         "canal_logs": 1430935700387270898,
         "modulos_ativos": ["ti"],

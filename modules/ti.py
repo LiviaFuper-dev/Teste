@@ -21,7 +21,65 @@ from utils.thread_utils import safe_join_thread, remove_members_except
 
 
 # ── Armazenamento local ────────────────────────────────────────────────────────
+
+# Controles auxiliares do fluxo de TI.
+# _LOGS_ACTIVE_THREADS evita executar !logs duas vezes ao mesmo tempo na mesma thread.
+# _BR_TIMEZONE padroniza datas e logs no horário de Brasília.
+
 _THREAD_MOTIVO: dict[int, str] = {}
+_LOGS_ACTIVE_THREADS: set[int] = set()
+_BR_TIMEZONE = datetime.timezone(datetime.timedelta(hours=-3))
+
+
+def _formatar_data_br(ts: datetime.datetime) -> str:
+    return ts.astimezone(_BR_TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def pop_thread_motivo(thread_id: int) -> str:
+    return _THREAD_MOTIVO.pop(thread_id, "")
+
+
+def register_thread_motivo(thread_id: int, motivo: str) -> None:
+    _THREAD_MOTIVO[thread_id] = motivo
+
+
+# Normaliza a empresa para o payload do N8N/ClickUp.
+# O código técnico ("mlr_advogados"/"fuper") é usado pela automação,
+# enquanto o label ("MLR"/"FUPER") é usado para exibição.
+
+def _empresa_clickup_ti(guild_id: int) -> tuple[str | None, str | None]:
+    raw = str(
+        config.SERVIDORES.get(guild_id, {}).get("empresa_clickup")
+        or config.SERVIDORES.get(guild_id, {}).get("nome")
+        or ""
+    ).strip().lower()
+
+    if raw in {"mlr", "mlr_advogados", "mlr advogados"}:
+        return "mlr_advogados", "MLR"
+    if raw in {"fuper"}:
+        return "fuper", "FUPER"
+    return None, None
+
+
+def _empresa_payload_ti(raw: str | None) -> dict:
+    raw_norm = str(raw or "").strip().lower()
+    if raw_norm in {"mlr", "mlr_advogados", "mlr advogados"}:
+        return {
+            "empresa": "mlr_advogados",
+            "Empresa": "MLR",
+            "empresa_label": "MLR",
+            "empresa_codigo": "mlr_advogados",
+            "empresa_clickup": "mlr_advogados",
+        }
+    if raw_norm in {"fuper"}:
+        return {
+            "empresa": "fuper",
+            "Empresa": "FUPER",
+            "empresa_label": "FUPER",
+            "empresa_codigo": "fuper",
+            "empresa_clickup": "fuper",
+        }
+    return {}
 
 
 # ── Helpers internos ───────────────────────────────────────────────────────────
@@ -326,6 +384,7 @@ async def _process_and_finalize(
 ) -> None:
 
     # 1. Coleta histórico de mensagens
+    motivo_historico = ""
     log_text = (
         f"Log da Thread: {channel.name}\n\n"
         f"=== Formulário (T.I.) ===\n"
@@ -336,7 +395,9 @@ async def _process_and_finalize(
 
     try:
         async for msg in channel.history(oldest_first=True, limit=None):
-            ts = msg.created_at.strftime("%Y-%m-%d %H:%M:%S")
+            ts = _formatar_data_br(msg.created_at)
+            if not motivo_historico and msg.content.startswith("**Solicitação de "):
+                motivo_historico = msg.content.split("**\n", 1)[-1].strip()
             log_text += f"[{ts}] {msg.author.display_name}: {msg.content}\n"
             for att in msg.attachments:
                 log_text += f"[Anexo] {att.url}\n"
@@ -379,19 +440,29 @@ async def _process_and_finalize(
         return
 
     # 3. Envia dados para o N8N
-    motivo = _THREAD_MOTIVO.pop(channel.id, "")
+    motivo = _THREAD_MOTIVO.pop(channel.id, "") or motivo_historico
     if config.N8N_WEBHOOK_TI:
+        chat_discord = datetime.datetime.now(_BR_TIMEZONE)
+        empresa_payload = _empresa_payload_ti(form_response.get("empresa"))
+        empresa_nome = empresa_payload.get("Empresa") or config.SERVIDORES.get(guild.id, {}).get("nome")
         payload = {
-            "empresa":             form_response.get("empresa"),
+            **empresa_payload,
             "nivel_real_problema": form_response.get("nivel_real_problema"),
             "confirmado_por":      form_response.get("confirmado_por"),
             "thread":              channel.name,
             "thread_id":           channel.id,
             "canal_logs":          canal_logs_id,
             "servidor":            config.SERVIDORES.get(guild.id, {}).get("nome"),
+            "empresa_selecionada": empresa_nome,
             "guild_id":            guild.id,
             "timestamp":           datetime.datetime.utcnow().isoformat() + "Z",
             "motivo":              motivo,
+            "Chamados":            motivo,
+            "chamados":            motivo,
+            "ChatDiscord":         chat_discord.isoformat(),
+            "chat_discord":        chat_discord.isoformat(),
+            "chat_discord_data":   _formatar_data_br(chat_discord),
+            "chat_discord_ms":     int(chat_discord.timestamp() * 1000),
             "conversa":            log_text,
         }
         await n8n_utils.send(config.N8N_WEBHOOK_TI, payload)
@@ -499,6 +570,10 @@ def setup(bot: commands.Bot) -> None:
         if cargo_ti not in ctx.author.roles:
             return
 
+        if channel.id in _LOGS_ACTIVE_THREADS:
+            return
+        _LOGS_ACTIVE_THREADS.add(channel.id)
+
         # 1. Remove imediatamente todos sem cargo TI
         allowed = {cargo_ti.id}
         removed, failed = await remove_members_except(channel, guild, allowed)
@@ -525,6 +600,8 @@ def setup(bot: commands.Bot) -> None:
             return
 
         await view.wait()
+        _LOGS_ACTIVE_THREADS.discard(channel.id)
+        # Marca que aquela thread já está processando !logs, para evitar duplicar mensagens/formulários se alguém mandar o comando duas vezes.
 
         if not view.form_response:
             try:

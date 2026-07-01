@@ -2,10 +2,11 @@
 main.py — Entry point do Caveira Unificado.
 
 Auto-fechamento por inatividade:
-  - Tópicos "1 - *" (sistemas) → fechados automaticamente após 24h sem mensagem
-  - Tópicos "2 - *" (equipamentos/TI) → fechados automaticamente após 24h sem mensagem
+  - Tópicos "1 - *" (sistemas) → movidos para #chamados-pendentes após 48h sem interação
+  - Tópicos "2 - *" (equipamentos/TI) → movidos para #chamados-pendentes após 48h sem interação
+  - Tópicos "3 - *" (recuperar contato) → movidos para #chamados-pendentes após 48h sem interação
   - Thread IDs já processados são salvos em data/thread_auto_actions.json
-    para não serem fechados novamente após reinício do bot.
+    para não serem processados novamente após reinício do bot.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ import config
 from modules import contato as contato_module
 from modules import sistemas as sistemas_module
 from modules import ti as ti_module
+from utils.pending_chamados import PendingChamadoView, chamado_pendente_existe, criar_card_pendente
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Bot
@@ -33,14 +35,13 @@ intents.guilds = True
 
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
-AUTO_INACTIVITY_HOURS = 36
-AUTO_CONTATO_INACTIVITY_HOURS = 48   # 2 dias → deleta o tópico
+PENDING_INACTIVITY_HOURS = 48
 _HANDLED_FILE = Path("data/thread_auto_actions.json")
 _HANDLED_FILE.parent.mkdir(parents=True, exist_ok=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Persistência de tópicos já fechados automaticamente
+#  Persistência de tópicos já processados automaticamente
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _load_handled() -> set[int]:
@@ -63,7 +64,7 @@ def _save_handled(ids: set[int]) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Loop de auto-fechamento
+#  Monitor de inatividade
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def _ultima_atividade(thread: discord.Thread) -> datetime:
@@ -90,19 +91,30 @@ async def _ultima_atividade_humana(thread: discord.Thread) -> datetime:
     ts = thread.created_at or datetime.now(timezone.utc)
     return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
 
+# Retorna a última interação registrada no payload de Sistemas.
+def _payload_last_interaction(thread_id: int) -> datetime | None:
+    try:
+        from modules.sistemas._engine import PENDING_PAYLOADS
+        raw = PENDING_PAYLOADS.get(thread_id, {}).get("last_interaction_at")
+        if not raw:
+            return None
+        ts = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
 
 @tasks.loop(minutes=10)
 async def auto_fechar_inativos():
     """
-    A cada 1 minuto varre os tópicos ativos.
-    - Prefixo "1 -" → sistemas  → envia SectorSelectView (mesmo fluxo do !sistema)
-    - Prefixo "2 -" → TI        → envia LogsFormView (mesmo fluxo do !logs)
+    Varre tópicos ativos e move chamados abandonados para #chamados-pendentes.
+    Os comandos manuais (!sistema, !logs, !contato) continuam finalizando na hora.
     """
     agora = datetime.now(timezone(timedelta(hours=-3)))
     if agora.weekday() in (5, 6):
         return
 
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=AUTO_INACTIVITY_HOURS)
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=PENDING_INACTIVITY_HOURS)
     handled = _load_handled()
     changed = False
 
@@ -126,26 +138,32 @@ async def auto_fechar_inativos():
                     continue
 
                 if name.startswith("3 -"):
-                    contato_cutoff = datetime.now(timezone.utc) - timedelta(hours=AUTO_CONTATO_INACTIVITY_HOURS)
-                    ultima = await _ultima_atividade_humana(thread)
-                    if ultima > contato_cutoff:
+                    from modules.contato import _THREAD_ACTIVITY
+                    if thread.id not in _THREAD_ACTIVITY:
                         continue
+                    ultima = await _ultima_atividade_humana(thread)
                 else:
                     ultima = await _ultima_atividade(thread)
-                    if ultima > cutoff:
-                        continue
+                    if name.startswith("1 -"):
+                        payload_ts = _payload_last_interaction(thread.id)
+                        if payload_ts and payload_ts > ultima:
+                            ultima = payload_ts
+                if ultima > cutoff:
+                    continue
 
                 print(f"[AUTO-CLOSE] Inativo: '{thread.name}' ({thread.id})")
 
+                processed = False
                 if name.startswith("1 -"):
-                    await _auto_fechar_sistemas(thread, guild)
+                    processed = await _auto_pendenciar_sistemas(thread, guild)
                 elif name.startswith("2 -"):
-                    await ti_module.auto_fechar_ti(thread, guild)
+                    processed = await _auto_pendenciar_ti(thread, guild)
                 elif name.startswith("3 -"):
-                    await _auto_fechar_contato(thread, guild)
+                    processed = await _auto_pendenciar_contato(thread, guild)
 
-                handled.add(thread.id)
-                changed = True
+                if processed:
+                    handled.add(thread.id)
+                    changed = True
 
             except discord.NotFound:
                 handled.add(thread.id)
@@ -159,83 +177,226 @@ async def auto_fechar_inativos():
         _save_handled(handled)
 
 
-async def _auto_fechar_sistemas(thread: discord.Thread, guild: discord.Guild) -> None:
-    """
-    Tópico de sistemas inativo por 24h.
-    Fecha automaticamente: envia payload pro N8N e deleta a thread.
-    """
-    from modules.sistemas._engine import _allowed_roles, _member_has_role, pop_payload, _send_to_n8n
-
-    allowed = _allowed_roles(guild.id)
-
-    # Remove membros sem cargo autorizado
+async def _guess_thread_user(
+    thread: discord.Thread,
+    guild: discord.Guild,
+    allowed_role_ids: set[int] | None = None,
+) -> discord.Member | None:
     try:
         await thread.fetch_members()
     except Exception:
         pass
+
+    fallback = None
     for tm in thread.members:
         try:
-            member = guild.get_member(tm.id)
-            if member is None:
-                member = await guild.fetch_member(tm.id)
-            if member.bot:
-                continue
-            if not _member_has_role(member, allowed):
-                await thread.remove_user(member)
+            member = guild.get_member(tm.id) or await guild.fetch_member(tm.id)
         except Exception:
-            pass
+            continue
+        if member.bot:
+            continue
+        if fallback is None:
+            fallback = member
+        if allowed_role_ids and not any(role.id in allowed_role_ids for role in member.roles):
+            return member
+    return fallback
 
-    await thread.send(
-        "⏰ Este chamado atingiu **36 horas de inatividade**.\n"
-        "Fechamento automático em andamento..."
-    )
 
-    # Pega o payload salvo e envia pro N8N
-    from utils.logs import coletar_historico
-    payload = pop_payload(thread.id)
-    if payload:
-        payload["auto_close"] = True
-        payload["conversa"] = await coletar_historico(thread)
-        ok = await _send_to_n8n(payload)
-        if ok:
-            print(f"[AUTO-CLOSE] Payload enviado para N8N: '{thread.name}'")
-        else:
-            print(f"[AUTO-CLOSE] Falha ao enviar payload para N8N: '{thread.name}'")
-    else:
-        print(f"[AUTO-CLOSE] Nenhum payload pendente para '{thread.name}' ({thread.id})")
+async def _archive_original_thread(thread: discord.Thread) -> None:
+    try:
+        await thread.edit(archived=True, locked=True)
+    except TypeError:
+        await thread.edit(archived=True)
+    except Exception as e:
+        print(f"[PENDENTES] Erro ao arquivar '{thread.name}': {e}")
 
-    # Envia log da conversa pro canal de logs
+
+async def _auto_pendenciar_sistemas(thread: discord.Thread, guild: discord.Guild) -> bool:
+    """Move um chamado de sistemas inativo para o painel de pendentes."""
+    from modules.sistemas._engine import _allowed_roles, pop_payload
     from utils.logs import enviar_log_conversa
-    canal_logs_id = config.SERVIDORES.get(guild.id, {}).get("canal_logs")
-    if canal_logs_id:
-        await enviar_log_conversa(
-            thread, guild, canal_logs_id,
-            prefixo_log="⚙️",
-            header_extra="=== Auto-fechamento (Sistemas) ===\nMotivo: Inatividade 36h",
+
+    payload = pop_payload(thread.id)
+    allowed = _allowed_roles(guild.id)
+    member = None
+    if payload and payload.get("user_id"):
+        try:
+            member = guild.get_member(int(payload["user_id"])) or await guild.fetch_member(int(payload["user_id"]))
+        except Exception:
+            member = None
+    if member is None:
+        member = await _guess_thread_user(thread, guild, allowed)
+
+    parts = thread.name.split(" - ")
+    sistema = payload.get("system") if payload else (parts[1] if len(parts) > 1 else "Sistemas")
+    motivo = payload.get("description") if payload else "Chamado ficou 48h sem interação."
+    if payload and sistema in {"E-mail", "Google Drive"}:
+        steps = payload.get("steps", {})
+        resumo = ["Chamado ficou 48h sem interação."]
+        if steps.get("dominio_detectado"):
+            resumo.append(f"E-mail selecionado: {steps['dominio_detectado']}")
+        if steps.get("email_usuario"):
+            resumo.append(f"E-mail informado: {steps['email_usuario']}")
+        if steps.get("problema"):
+            resumo.append(f"Problema relatado: {steps['problema']}")
+        motivo = "\n".join(resumo)
+    user_id = int(payload.get("user_id")) if payload and payload.get("user_id") else (member.id if member else 0)
+    user_name = payload.get("user_name") if payload else (member.display_name if member else "Usuario nao identificado")
+
+    if not chamado_pendente_existe(thread.id):
+        await thread.send(
+            "⚠️ Este chamado ficou 48 horas sem interação e foi movido para o painel de chamados pendentes."
         )
 
-    try:
-        await thread.delete()
-        print(f"[AUTO-CLOSE] Tópico '{thread.name}' deletado.")
-    except Exception as e:
-        print(f"[AUTO-CLOSE] Erro ao deletar '{thread.name}': {e}")
+    canal_logs_id = config.SERVIDORES.get(guild.id, {}).get("canal_logs")
+    log_url = None
+    if canal_logs_id:
+        log_url = await enviar_log_conversa(
+            thread,
+            guild,
+            canal_logs_id,
+            prefixo_log="[SISTEMAS]",
+            header_extra="=== Chamado pendente (Sistemas) ===\nMotivo: Inatividade 48h",
+        )
 
-
-async def _auto_fechar_contato(thread: discord.Thread, guild: discord.Guild) -> None:
-    """Tópico de contato inativo por 48h. Avisa e deleta."""
-    from modules.contato import _THREAD_ACTIVITY
-    _THREAD_ACTIVITY.pop(thread.id, None)
-
-    await thread.send(
-        "⏰ Este tópico atingiu **48 horas de inatividade** e será excluído automaticamente."
+    ok = await criar_card_pendente(
+        thread,
+        guild,
+        kind="sistemas",
+        tipo_label="Sistemas",
+        sistema=sistema,
+        user_id=user_id,
+        user_name=user_name,
+        motivo=motivo or "Chamado ficou 48h sem interação.",
+        log_url=log_url,
+        payload=payload,
     )
+    if not ok:
+        return False
+
+    await _archive_original_thread(thread)
+    print(f"[PENDENTES] Sistemas pendente: '{thread.name}'")
+    return True
+
+
+async def _auto_pendenciar_ti(thread: discord.Thread, guild: discord.Guild) -> bool:
+    """Move um chamado de TI inativo para o painel de pendentes."""
+    from utils.logs import enviar_log_conversa
+
+    cargo_ti = ti_module._get_cargo_ti(guild, guild.id)
+    allowed = {cargo_ti.id} if cargo_ti else set()
+    member = await _guess_thread_user(thread, guild, allowed)
+    motivo = ti_module.pop_thread_motivo(thread.id) or "Chamado de TI ficou 48h sem interação."
+
+    if not chamado_pendente_existe(thread.id):
+        await thread.send(
+            "⚠️ Este chamado ficou 48 horas sem interação e foi movido para o painel de chamados pendentes."
+        )
+
+    canal_logs_id = config.SERVIDORES.get(guild.id, {}).get("canal_logs")
+    log_url = None
+    if canal_logs_id:
+        log_url = await enviar_log_conversa(
+            thread,
+            guild,
+            canal_logs_id,
+            prefixo_log="[TI]",
+            header_extra="=== Chamado pendente (TI) ===\nMotivo: Inatividade 48h",
+        )
+
+    ok = await criar_card_pendente(
+        thread,
+        guild,
+        kind="ti",
+        tipo_label="Equipamentos/TI",
+        sistema="Equipamentos",
+        user_id=member.id if member else 0,
+        user_name=member.display_name if member else "Usuario nao identificado",
+        motivo=motivo,
+        log_url=log_url,
+    )
+    if not ok:
+        return False
+
+    await _archive_original_thread(thread)
+    print(f"[PENDENTES] TI pendente: '{thread.name}'")
+    return True
+
+
+async def _extract_contato_resumo(thread: discord.Thread) -> str:
+    nome = None
+    cpf = None
     try:
-        await thread.delete()
-        print(f"[AUTO-CLOSE] Contato deletado: '{thread.name}' ({thread.id})")
-    except discord.NotFound:
-        print(f"[AUTO-CLOSE] Contato {thread.id} já deletado.")
+        async for msg in thread.history(oldest_first=True, limit=100):
+            for line in msg.content.splitlines():
+                clean = line.replace("*", "").strip()
+                lower = clean.lower()
+                if (
+                    lower.startswith("nome:")
+                    or lower.startswith("nome do contato:")
+                ) and not nome:
+                    nome = clean.split(":", 1)[1].strip()
+                elif (
+                    lower.startswith("cpf:")
+                    or lower.startswith("cpf do contato:")
+                ) and not cpf:
+                    cpf = clean.split(":", 1)[1].strip()
     except Exception as e:
-        print(f"[AUTO-CLOSE] Erro ao deletar contato '{thread.name}': {e}")
+        print(f"[PENDENTES] Erro ao extrair dados de contato: {e}")
+
+    partes = []
+    if nome:
+        partes.append(f"Nome do contato: {nome}")
+    if cpf:
+        partes.append(f"CPF do contato: {cpf}")
+    if partes:
+        return "\n".join(partes)
+    return "Dados do contato nao encontrados no historico."
+
+
+async def _auto_pendenciar_contato(thread: discord.Thread, guild: discord.Guild) -> bool:
+    """Move um chamado de contato inativo para o painel de pendentes."""
+    from modules.contato import _THREAD_ACTIVITY
+    from utils.logs import enviar_log_conversa
+
+    _THREAD_ACTIVITY.pop(thread.id, None)
+    member = await _guess_thread_user(thread, guild, set())
+    detalhes = await _extract_contato_resumo(thread)
+    motivo = f"Chamado de recuperação de contato ficou 48h sem interação.\n{detalhes}"
+
+    if not chamado_pendente_existe(thread.id):
+        await thread.send(
+            "⚠️ Este chamado ficou 48 horas sem interação e foi movido para o painel de chamados pendentes."
+        )
+
+    canal_logs_id = config.SERVIDORES.get(guild.id, {}).get("canal_logs")
+    log_url = None
+    if canal_logs_id:
+        log_url = await enviar_log_conversa(
+            thread,
+            guild,
+            canal_logs_id,
+            prefixo_log="[CONTATO]",
+            header_extra="=== Chamado pendente (Contato) ===\nMotivo: Inatividade 48h",
+        )
+
+    ok = await criar_card_pendente(
+        thread,
+        guild,
+        kind="contato",
+        tipo_label="Recuperar Contato",
+        sistema="Contato",
+        user_id=member.id if member else 0,
+        user_name=member.display_name if member else "Usuario nao identificado",
+        motivo=motivo,
+        log_url=log_url,
+    )
+    if not ok:
+        return False
+
+    await _archive_original_thread(thread)
+    print(f"[PENDENTES] Contato pendente: '{thread.name}'")
+    return True
 
 
 @auto_fechar_inativos.before_loop
@@ -345,50 +506,50 @@ def _build_menu_embed(guild_id: int | None = None) -> discord.Embed:
         color=discord.Color.blurple(),
     )
     if "sistemas" in modulos:
-      embed.add_field(
-        name="⚙️ Sistemas",
-        value=(
-            "Problemas com as ferramentas e sistemas que utilizamos no escritório.\n"
-            "Esta opção cobre: **ChatGuru** (disparos e mensagens), **Whom** (peticionamento), "
-            "**ClickUp** (tarefas e projetos), **E-mail** (contas do escritório), "
-            "**Falepaco** (sistema interno) e **Robôs/Automações** (INSS, planilhas, IA e integrações).\n"
-            "Ao clicar, o bot fará algumas perguntas rápidas para tentar resolver automaticamente. "
-            "Se não resolver, a equipe responsável será acionada.\n\u200b"
-        ),
-        inline=False,
-    )
+        embed.add_field(
+            name="⚙️ Sistemas",
+            value=(
+                "Problemas com as ferramentas e sistemas que utilizamos no escritório.\n"
+                "Esta opção cobre: **ChatGuru** (disparos e mensagens), **Whom** (peticionamento), "
+                "**ClickUp** (tarefas e projetos), **E-mail** (contas do escritório), "
+                "**Falepaco** (sistema interno) e **Robôs/Automações** (INSS, planilhas, IA e integrações).\n"
+                "Ao clicar, o bot fará algumas perguntas rápidas para tentar resolver automaticamente. "
+                "Se não resolver, a equipe responsável será acionada.\n\u200b"
+            ),
+            inline=False,
+        )
     if "ti" in modulos:
-      embed.add_field(
-        name="🖥️ Equipamentos",
-        value=(
-            "Problemas relacionados ao seu computador ou periféricos.\n"
-            "Use esta opção se o seu computador estiver lento, travando, não ligando, "
-            "ou se algum equipamento estiver com defeito — como mouse, teclado, headset, "
-            "monitor ou qualquer outro acessório de trabalho.\n\u200b"
-        ),
-        inline=False,
-    )
+        embed.add_field(
+            name="🖥️ Equipamentos",
+            value=(
+                "Problemas relacionados ao seu computador ou periféricos.\n"
+                "Use esta opção se o seu computador estiver lento, travando, não ligando, "
+                "ou se algum equipamento estiver com defeito — como mouse, teclado, headset, "
+                "monitor ou qualquer outro acessório de trabalho.\n\u200b"
+            ),
+            inline=False,
+        )
     if "contato" in modulos:
-      embed.add_field(
-        name="📞 Recuperar Contato",
-        value=(
-            "Canal para solicitar a recuperação do telefone de um contato.\n"
-            "Caso precise localizar o número de algum cliente ou pessoa de interesse "
-            "e não esteja conseguindo encontrá-lo, utilize esta opção.\n\u200b"
-        ),
-        inline=False,
-    )
+        embed.add_field(
+            name="📞 Recuperar Contato",
+            value=(
+                "Canal para solicitar a recuperação do telefone de um contato.\n"
+                "Caso precise localizar o número de algum cliente ou pessoa de interesse "
+                "e não esteja conseguindo encontrá-lo, utilize esta opção.\n\u200b"
+            ),
+            inline=False,
+        )
     if "reembolso" in modulos:
-      embed.add_field(
-        name="📋 Solicitação de Reembolso",
-        value=(
-            "Gastou com algo necessário para o trabalho no escritório?\n"
-            "Utilize esta opção para solicitar o reembolso do valor. "
-            "Você será redirecionado para um formulário onde poderá descrever o gasto "
-            "e anexar o comprovante.\n\u200b"
-        ),
-        inline=False,
-    )
+        embed.add_field(
+            name="📋 Solicitação de Reembolso",
+            value=(
+                "Gastou com algo necessário para o trabalho no escritório?\n"
+                "Utilize esta opção para solicitar o reembolso do valor. "
+                "Você será redirecionado para um formulário onde poderá descrever o gasto "
+                "e anexar o comprovante.\n\u200b"
+            ),
+            inline=False,
+        )
     embed.set_footer(text="Em caso de dúvidas, abra um chamado e nossa equipe te ajuda.")
     return embed
 
@@ -414,12 +575,13 @@ async def on_ready():
     bot.add_view(MainMenuView())
     bot.add_view(ti_module.UrgenciaView())
     bot.add_view(sistemas_module.ServicesView())
+    bot.add_view(PendingChamadoView(bot))
 
     contato_module.start_tasks()
 
     if not auto_fechar_inativos.is_running():
         auto_fechar_inativos.start()
-        print(f"✅ Auto-fechamento iniciado (inatividade: {AUTO_INACTIVITY_HOURS}h).")
+        print(f"✅ Monitor de pendentes iniciado (inatividade: {PENDING_INACTIVITY_HOURS}h).")
 
     for guild_id, srv_cfg in config.SERVIDORES.items():
         nome = srv_cfg.get("nome", str(guild_id))
