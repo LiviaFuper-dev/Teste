@@ -3,7 +3,7 @@ utils/pending_chamados.py — Painel de chamados pendentes por inatividade.
 
 Fluxo:
   - Chamados de Sistemas, Equipamentos/TI e Recuperar Contato ficam ativos na thread original.
-  - Após 48h sem interação, o main.py gera log, cria um card em #chamados-pendentes
+  - Após 24h sem interação, o main.py gera log, cria um card em #chamados-pendentes
     e arquiva a thread original.
   - O card permite ver histórico, retomar o chamado em uma nova thread ou excluir o pendente.
   - Ao retomar, dados importantes do atendimento anterior são restaurados para o fluxo continuar.
@@ -108,7 +108,7 @@ def _build_embed(record: dict[str, Any]) -> discord.Embed:
     if record.get("kind") == "sistemas" and sistema in {"E-mail", "Google Drive"}:
         linhas.extend(
             [
-                f"**Resumo:** Chamado ficou 48h sem interação.",
+                f"**Resumo:** Chamado ficou 24h sem interação.",
                 f"**E-mail selecionado:** {steps.get('dominio_detectado', '-')}",
                 f"**E-mail informado:** {steps.get('email_usuario', '-')}",
                 f"**Problema relatado:** {steps.get('problema', '-')}",
@@ -282,7 +282,7 @@ class PendingChamadoView(discord.ui.View):
                     f"📌 **Chamado Reaberto**\n\n"
                     f"Olá {user_label}, estamos retomando seu chamado anterior.\n\n"
                     f"**Sistema:** {sistema}\n"
-                    f"**Motivo:** Chamado ficou 48h sem interação.\n"
+                    f"**Motivo:** Chamado ficou 24h sem interação.\n"
                     f"**E-mail selecionado:** {steps.get('dominio_detectado', '-')}\n"
                     f"**E-mail informado:** {steps.get('email_usuario', '-')}\n"
                     f"**Problema relatado:** {steps.get('problema', '-')}\n"
@@ -406,7 +406,7 @@ async def criar_card_pendente(
         "original_thread_name": thread.name,
         "thread_name": thread.name,
         "thread_url": getattr(thread, "jump_url", None),
-        "inativo_ha": "48h",
+        "inativo_ha": "24h",
         "created_at": datetime.datetime.utcnow().isoformat() + "Z",
         "payload": payload,
     }

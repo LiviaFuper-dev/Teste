@@ -2,9 +2,9 @@
 main.py — Entry point do Caveira Unificado.
 
 Auto-fechamento por inatividade:
-  - Tópicos "1 - *" (sistemas) → movidos para #chamados-pendentes após 48h sem interação
-  - Tópicos "2 - *" (equipamentos/TI) → movidos para #chamados-pendentes após 48h sem interação
-  - Tópicos "3 - *" (recuperar contato) → movidos para #chamados-pendentes após 48h sem interação
+  - Tópicos "1 - *" (sistemas) → movidos para #chamados-pendentes após 24h sem interação
+  - Tópicos "2 - *" (equipamentos/TI) → movidos para #chamados-pendentes após 24h sem interação
+  - Tópicos "3 - *" (recuperar contato) → movidos para #chamados-pendentes após 24h sem interação
   - Thread IDs já processados são salvos em data/thread_auto_actions.json
     para não serem processados novamente após reinício do bot.
 """
@@ -35,7 +35,7 @@ intents.guilds = True
 
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
-PENDING_INACTIVITY_HOURS = 48
+PENDING_INACTIVITY_HOURS = 24
 _HANDLED_FILE = Path("data/thread_auto_actions.json")
 _HANDLED_FILE.parent.mkdir(parents=True, exist_ok=True)
 
@@ -229,10 +229,10 @@ async def _auto_pendenciar_sistemas(thread: discord.Thread, guild: discord.Guild
 
     parts = thread.name.split(" - ")
     sistema = payload.get("system") if payload else (parts[1] if len(parts) > 1 else "Sistemas")
-    motivo = payload.get("description") if payload else "Chamado ficou 48h sem interação."
+    motivo = payload.get("description") if payload else "Chamado ficou 24h sem interação."
     if payload and sistema in {"E-mail", "Google Drive"}:
         steps = payload.get("steps", {})
-        resumo = ["Chamado ficou 48h sem interação."]
+        resumo = ["Chamado ficou 24h sem interação."]
         if steps.get("dominio_detectado"):
             resumo.append(f"E-mail selecionado: {steps['dominio_detectado']}")
         if steps.get("email_usuario"):
@@ -245,7 +245,7 @@ async def _auto_pendenciar_sistemas(thread: discord.Thread, guild: discord.Guild
 
     if not chamado_pendente_existe(thread.id):
         await thread.send(
-            "⚠️ Este chamado ficou 48 horas sem interação e foi movido para o painel de chamados pendentes."
+            "⚠️ Este chamado ficou 24 horas sem interação e foi movido para o painel de chamados pendentes."
         )
 
     canal_logs_id = config.SERVIDORES.get(guild.id, {}).get("canal_logs")
@@ -256,7 +256,7 @@ async def _auto_pendenciar_sistemas(thread: discord.Thread, guild: discord.Guild
             guild,
             canal_logs_id,
             prefixo_log="[SISTEMAS]",
-            header_extra="=== Chamado pendente (Sistemas) ===\nMotivo: Inatividade 48h",
+            header_extra="=== Chamado pendente (Sistemas) ===\nMotivo: Inatividade 24h",
         )
 
     ok = await criar_card_pendente(
@@ -267,7 +267,7 @@ async def _auto_pendenciar_sistemas(thread: discord.Thread, guild: discord.Guild
         sistema=sistema,
         user_id=user_id,
         user_name=user_name,
-        motivo=motivo or "Chamado ficou 48h sem interação.",
+        motivo=motivo or "Chamado ficou 24h sem interação.",
         log_url=log_url,
         payload=payload,
     )
@@ -286,11 +286,11 @@ async def _auto_pendenciar_ti(thread: discord.Thread, guild: discord.Guild) -> b
     cargo_ti = ti_module._get_cargo_ti(guild, guild.id)
     allowed = {cargo_ti.id} if cargo_ti else set()
     member = await _guess_thread_user(thread, guild, allowed)
-    motivo = ti_module.pop_thread_motivo(thread.id) or "Chamado de TI ficou 48h sem interação."
+    motivo = ti_module.pop_thread_motivo(thread.id) or "Chamado de TI ficou 24h sem interação."
 
     if not chamado_pendente_existe(thread.id):
         await thread.send(
-            "⚠️ Este chamado ficou 48 horas sem interação e foi movido para o painel de chamados pendentes."
+            "⚠️ Este chamado ficou 24 horas sem interação e foi movido para o painel de chamados pendentes."
         )
 
     canal_logs_id = config.SERVIDORES.get(guild.id, {}).get("canal_logs")
@@ -301,7 +301,7 @@ async def _auto_pendenciar_ti(thread: discord.Thread, guild: discord.Guild) -> b
             guild,
             canal_logs_id,
             prefixo_log="[TI]",
-            header_extra="=== Chamado pendente (TI) ===\nMotivo: Inatividade 48h",
+            header_extra="=== Chamado pendente (TI) ===\nMotivo: Inatividade 24h",
         )
 
     ok = await criar_card_pendente(
@@ -362,11 +362,11 @@ async def _auto_pendenciar_contato(thread: discord.Thread, guild: discord.Guild)
     _THREAD_ACTIVITY.pop(thread.id, None)
     member = await _guess_thread_user(thread, guild, set())
     detalhes = await _extract_contato_resumo(thread)
-    motivo = f"Chamado de recuperação de contato ficou 48h sem interação.\n{detalhes}"
+    motivo = f"Chamado de recuperação de contato ficou 24h sem interação.\n{detalhes}"
 
     if not chamado_pendente_existe(thread.id):
         await thread.send(
-            "⚠️ Este chamado ficou 48 horas sem interação e foi movido para o painel de chamados pendentes."
+            "⚠️ Este chamado ficou 24 horas sem interação e foi movido para o painel de chamados pendentes."
         )
 
     canal_logs_id = config.SERVIDORES.get(guild.id, {}).get("canal_logs")
@@ -377,7 +377,7 @@ async def _auto_pendenciar_contato(thread: discord.Thread, guild: discord.Guild)
             guild,
             canal_logs_id,
             prefixo_log="[CONTATO]",
-            header_extra="=== Chamado pendente (Contato) ===\nMotivo: Inatividade 48h",
+            header_extra="=== Chamado pendente (Contato) ===\nMotivo: Inatividade 24h",
         )
 
     ok = await criar_card_pendente(
