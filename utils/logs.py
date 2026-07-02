@@ -71,7 +71,7 @@ async def enviar_log_conversa(
     canal_logs_id: int,
     prefixo_log: str = "\U0001f4c1",
     header_extra: str = "",
-) -> bool:
+) -> str | bool:
     """Envia o histórico da thread como arquivo .txt para o canal de logs."""
     log_text = f"Log da Thread: {thread.name}\n\n"
     if header_extra:
@@ -89,12 +89,12 @@ async def enviar_log_conversa(
         filename=f"log_{thread.name}.txt",
     )
     try:
-        await logs_canal.send(
+        msg = await logs_canal.send(
             content=f"{prefixo_log} Log do chamado `{thread.name}`",
             file=log_file,
         )
         print(f"[LOG] Enviado para #{logs_canal.name}: '{thread.name}'")
-        return True
+        return msg.jump_url
     except Exception as e:
         print(f"[LOG] Erro ao enviar log de '{thread.name}': {e}")
         return False

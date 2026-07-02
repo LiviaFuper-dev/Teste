@@ -48,6 +48,9 @@ CONTATO_TARGET_ROLE_ID: int             = 1516088193240400054  # cargo mencionad
 CONTATO_INACTIVITY_TIMEOUT_SECONDS: int = 86400                # 24h (use 5 para teste)
 CONTATO_CLOSE_DELAY_SECONDS: int        = 43200                # 12h após !contato (use 3 para teste)
 
+# Modulo TI / Equipamentos
+EQUIPAMENTOS_ROLE_ID: int = 1519781852611875098  # cargo mencionado nos chamados de equipamentos
+
 CONTATO_INACTIVITY_MESSAGE: str = (
     "Eii! Atualização sobre a sua busca: :hourglass:\n\n"
     "O sistema ainda está rodando a varredura para localizar os contatos desse cliente.\n\n"
@@ -74,12 +77,15 @@ SERVIDORES: dict[int, dict] = {
 
     1407051681421594806: {
         "nome": "MLR",
+        "empresa_clickup": "mlr_advogados", # Usado para preencher o campo de empresa no payload enviado ao N8N/ClickUp.
+        "canal_chamados_pendentes": 1521930365537615882, # Canal que recebe os cards de chamados inativos.
         "canal_unificado": 1481687593224507554,
         "canal_logs": 1429922070036217977,
         "modulos_ativos": ["sistemas", "ti", "contato", "reembolso"],
 
         "ti": {
             "cargo_ti":   1415390806541598831,
+            "cargo_equipamentos": 1519781852611875098,
             "canal_logs": 1429922070036217977,
         },
 
@@ -94,6 +100,7 @@ SERVIDORES: dict[int, dict] = {
 
     1409995330795081738: {
         "nome": "FUPER",
+        "empresa_clickup": "fuper", # Usado para preencher o campo de empresa no payload enviado ao N8N/ClickUp.
         "canal_unificado": 1430934934402498742,
         "canal_logs": 1430935700387270898,
         "modulos_ativos": ["ti"],
