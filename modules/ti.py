@@ -99,6 +99,12 @@ def _get_cargo_ti(guild: discord.Guild, guild_id: int) -> discord.Role | None:
             return r
     return None
 
+def _get_cargo_equipamentos(guild: discord.Guild, guild_id: int) -> discord.Role | None:
+    role_id = _ti_cfg(guild_id).get(
+        "cargo_equipamentos",
+        getattr(config, "EQUIPAMENTOS_ROLE_ID", None),
+    )
+    return guild.get_role(role_id) if role_id else None
 
 # ── Modal: descrição do problema ──────────────────────────────────────────────
 
@@ -173,6 +179,7 @@ async def _criar_chamado(
         return
 
     cargo_ti = _get_cargo_ti(guild, guild.id)
+    cargo_equipamentos = _get_cargo_equipamentos(guild, guild.id)
 
     try:
         thread = await channel.create_thread(
@@ -230,9 +237,15 @@ async def _criar_chamado(
 
     try:
         await thread.send(embed=embed)
-        if cargo_ti:
+        mentions = [
+            role.mention
+            for role in (cargo_ti, cargo_equipamentos)
+            if role is not None
+        ]
+        mentions = list(dict.fromkeys(mentions))
+        if mentions:
             await thread.send(
-                cargo_ti.mention,
+                " ".join(mentions),
                 allowed_mentions=discord.AllowedMentions(roles=True),
             )
     except Exception as e:
