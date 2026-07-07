@@ -14,7 +14,9 @@ Numeração: 2 — todos os tópicos abrem como "3 - NomeDoUsuário"
 
 import asyncio
 import datetime
+import json
 import re
+from pathlib import Path
 
 import discord
 from discord.ext import commands, tasks
@@ -28,6 +30,8 @@ _CPF_REGEX = re.compile(r"^\d{3}\.\d{3}\.\d{3}-\d{2}$")
 # ── Controle de inatividade ────────────────────────────────────────────────────
 # { thread_id: {"last_activity": datetime} }
 _THREAD_ACTIVITY: dict[int, dict] = {}
+_FINALIZADOS_FILE = Path("data/contatos_finalizados.json")
+_FINALIZADOS_FILE.parent.mkdir(parents=True, exist_ok=True)
 
 # ── Referência ao bot (preenchida em setup) ───────────────────────────────────
 _bot: commands.Bot | None = None
@@ -35,8 +39,60 @@ _bot: commands.Bot | None = None
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _contato_cfg(guild_id: int | None) -> dict:
+    if not guild_id:
+        return {}
+    return config.SERVIDORES.get(guild_id, {}).get("contato", {})
+
+
+def _target_role_id(guild_id: int | None) -> int:
+    return int(_contato_cfg(guild_id).get("target_role_id") or config.CONTATO_TARGET_ROLE_ID)
+
+
+def _load_finalizados() -> set[int]:
+    if not _FINALIZADOS_FILE.exists():
+        return set()
+    try:
+        return {int(x) for x in json.loads(_FINALIZADOS_FILE.read_text(encoding="utf-8"))}
+    except Exception:
+        return set()
+
+
+def _save_finalizados(ids: set[int]) -> None:
+    try:
+        _FINALIZADOS_FILE.write_text(
+            json.dumps(sorted(ids), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception as e:
+        print(f"[CONTATO] Erro ao salvar finalizados: {e}")
+
+
+def mark_thread_finalizada(thread_id: int) -> None:
+    ids = _load_finalizados()
+    ids.add(int(thread_id))
+    _save_finalizados(ids)
+
+
+def is_thread_finalizada(thread_id: int) -> bool:
+    return int(thread_id) in _load_finalizados()
+
+
 def _validar_cpf(cpf: str) -> bool:
     return bool(_CPF_REGEX.match(cpf))
+
+
+def register_thread_activity(thread_id: int) -> None:
+    _THREAD_ACTIVITY[thread_id] = {"last_activity": datetime.datetime.utcnow()}
+
+
+def get_thread_activity(thread_id: int) -> datetime.datetime | None:
+    raw = _THREAD_ACTIVITY.get(thread_id, {}).get("last_activity")
+    if raw is None:
+        return None
+    if raw.tzinfo is None:
+        return raw.replace(tzinfo=datetime.timezone.utc)
+    return raw.astimezone(datetime.timezone.utc)
 
 
 # ── Task de inatividade ───────────────────────────────────────────────────────
@@ -83,6 +139,20 @@ async def _fechar_topico_apos_delay(thread: discord.Thread, guild_id: int):
         if guild and guild.get_thread(thread.id) is None:
             print(f"[CONTATO] Tópico {thread.id} já deletado.")
             return
+
+        canal_logs_id = config.SERVIDORES.get(guild_id, {}).get("canal_logs")
+        if guild and canal_logs_id:
+            try:
+                from utils.logs import enviar_log_conversa
+                await enviar_log_conversa(
+                    thread,
+                    guild,
+                    canal_logs_id,
+                    prefixo_log="[CONTATO]",
+                    header_extra="=== Contato concluido ===\nMotivo: Fechado apos !contato",
+                )
+            except Exception as e:
+                print(f"[CONTATO] Erro ao enviar log de fechamento: {e}")
 
         await thread.delete()
         print(f"[CONTATO] Tópico {thread.id} fechado automaticamente.")
@@ -234,7 +304,7 @@ async def _criar_thread_contato(
 
     # Adiciona CONTATO_TARGET_ROLE_ID
     # feat: [FIX] 15/06 - menciona o cargo de contato na thread, sem adicionar usuário fixo
-    role_id = config.CONTATO_TARGET_ROLE_ID
+    role_id = _target_role_id(guild.id)
     if role_id:
         try:
             await thread.send(
@@ -245,7 +315,7 @@ async def _criar_thread_contato(
             print(f"[CONTATO] Não foi possível mencionar CONTATO_TARGET_ROLE_ID: {e}")
 
     # Registra no controle de inatividade
-    _THREAD_ACTIVITY[thread.id] = {"last_activity": datetime.datetime.utcnow()}
+    register_thread_activity(thread.id)
 
     # Re-envia payload com thread_id para o N8N
     payload["thread_id"]         = thread.id
@@ -337,6 +407,7 @@ def setup(bot: commands.Bot) -> None:
 
         # Remove do controle de inatividade
         _THREAD_ACTIVITY.pop(channel.id, None)
+        mark_thread_finalizada(channel.id)
 
 
 

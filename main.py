@@ -110,10 +110,6 @@ async def auto_fechar_inativos():
     Varre tópicos ativos e move chamados abandonados para #chamados-pendentes.
     Os comandos manuais (!sistema, !logs, !contato) continuam finalizando na hora.
     """
-    agora = datetime.now(timezone(timedelta(hours=-3)))
-    if agora.weekday() in (5, 6):
-        return
-
     cutoff = datetime.now(timezone.utc) - timedelta(hours=PENDING_INACTIVITY_HOURS)
     handled = _load_handled()
     changed = False
@@ -123,25 +119,49 @@ async def auto_fechar_inativos():
         if guild is None:
             continue
 
+        threads_by_id = {}
         try:
-            threads = guild.threads
+            for thread in guild.threads:
+                threads_by_id[thread.id] = thread
         except Exception:
-            threads = []
+            pass
+
+        canal_unificado_id = config.SERVIDORES.get(guild_id, {}).get("canal_unificado")
+        parent = guild.get_channel(canal_unificado_id) if canal_unificado_id else None
+        if parent and hasattr(parent, "archived_threads"):
+            for private in (True, False):
+                try:
+                    async for thread in parent.archived_threads(limit=None, private=private):
+                        threads_by_id[thread.id] = thread
+                except Exception as e:
+                    print(f"[AUTO-CLOSE] Erro ao buscar threads arquivadas em {guild.id}: {e}")
+
+        threads = list(threads_by_id.values())
 
         for thread in threads:
             try:
-                if thread.archived or thread.id in handled:
+                if thread.id in handled:
                     continue
 
                 name = thread.name.strip()
                 if not (name.startswith("1 -") or name.startswith("2 -") or name.startswith("3 -")):
                     continue
 
+                if thread.archived:
+                    try:
+                        await thread.edit(archived=False)
+                    except Exception as e:
+                        print(f"[AUTO-CLOSE] Nao foi possivel reabrir thread arquivada {thread.id}: {e}")
+                        continue
+
                 if name.startswith("3 -"):
-                    from modules.contato import _THREAD_ACTIVITY
-                    if thread.id not in _THREAD_ACTIVITY:
+                    from modules.contato import get_thread_activity, is_thread_finalizada
+                    if is_thread_finalizada(thread.id):
                         continue
                     ultima = await _ultima_atividade_humana(thread)
+                    activity_ts = get_thread_activity(thread.id)
+                    if activity_ts and activity_ts > ultima:
+                        ultima = activity_ts
                 else:
                     ultima = await _ultima_atividade(thread)
                     if name.startswith("1 -"):

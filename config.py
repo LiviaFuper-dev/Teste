@@ -14,7 +14,7 @@ Para adicionar um novo módulo:
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(encoding="utf-8-sig")
 
 # ── Token ──────────────────────────────────────────────────────────────────────
 DISCORD_TOKEN: str = os.getenv("DISCORD_TOKEN", "")
@@ -46,7 +46,7 @@ ADMIN_EXTRA_ROLE_ID: int     = 1424847269148102656   # Cargo adicional
 # ── Módulo Contato ─────────────────────────────────────────────────────────────
 CONTATO_TARGET_ROLE_ID: int             = 1516088193240400054  # cargo mencionado em todo tópico
 CONTATO_INACTIVITY_TIMEOUT_SECONDS: int = 86400                # 24h (use 5 para teste)
-CONTATO_CLOSE_DELAY_SECONDS: int        = 43200                # 12h após !contato (use 3 para teste)
+CONTATO_CLOSE_DELAY_SECONDS: int        = 86400                # 24h após !contato
 
 # Modulo TI / Equipamentos
 EQUIPAMENTOS_ROLE_ID: int = 1519781852611875098  # cargo mencionado nos chamados de equipamentos
