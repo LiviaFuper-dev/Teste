@@ -36,6 +36,11 @@ intents.guilds = True
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 PENDING_INACTIVITY_HOURS = 24
+# Data de corte do monitor de pendentes.
+# Chamados criados antes desta data sao historico antigo e nunca sao movidos
+# automaticamente para #chamados-pendentes. Chamados criados a partir daqui
+# seguem a regra normal: se ficarem 24h sem interacao, viram pendencia.
+PENDING_IGNORE_BEFORE = datetime(2026, 7, 8, tzinfo=timezone.utc)
 _HANDLED_FILE = Path("data/thread_auto_actions.json")
 _HANDLED_FILE.parent.mkdir(parents=True, exist_ok=True)
 
@@ -145,6 +150,11 @@ async def auto_fechar_inativos():
 
                 name = thread.name.strip()
                 if not (name.startswith("1 -") or name.startswith("2 -") or name.startswith("3 -")):
+                    continue
+
+                created_at = thread.created_at or datetime.now(timezone.utc)
+                created_at = created_at if created_at.tzinfo else created_at.replace(tzinfo=timezone.utc)
+                if created_at < PENDING_IGNORE_BEFORE:
                     continue
 
                 if thread.archived:
