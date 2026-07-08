@@ -237,12 +237,15 @@ async def _criar_chamado(
 
     try:
         await thread.send(embed=embed)
-        mentions = [
-            role.mention
-            for role in (cargo_ti, cargo_equipamentos)
-            if role is not None
-        ]
-        mentions = list(dict.fromkeys(mentions))
+        mention_ids: list[int] = []
+        if cargo_equipamentos:
+            mention_ids.append(cargo_equipamentos.id)
+        else:
+            role_id = _ti_cfg(guild.id).get("cargo_equipamentos")
+            if role_id:
+                mention_ids.append(int(role_id))
+                print(f"[TI] Cargo de equipamentos nao encontrado no cache; mencionando por ID {role_id}.")
+        mentions = [f"<@&{role_id}>" for role_id in dict.fromkeys(mention_ids)]
         if mentions:
             await thread.send(
                 " ".join(mentions),
