@@ -106,6 +106,11 @@ _STEPS_PADRAO = [
             "problemas de conexão e carregamento do sistema."
         ),
     },
+    {
+        "step_key": "print_tela",
+        "pergunta_padrao": "📸 Envie um print da tela inteira onde o erro aparece.",
+        "view": "print",
+    },
 ]
 
 SISTEMAS_CONFIG: dict[str, dict] = {
@@ -289,9 +294,14 @@ class DiagnosticoView(discord.ui.View):
         if next_index < len(steps):
             await interaction.response.defer()
             pergunta = _get_pergunta(self.sistema, steps[next_index])
+            view = (
+                PrintScreenView(self.sistema, next_index, self.original_user_id)
+                if steps[next_index].get("view") == "print"
+                else DiagnosticoView(self.sistema, next_index, self.original_user_id)
+            )
             await interaction.channel.send(
                 pergunta,
-                view=DiagnosticoView(self.sistema, next_index, self.original_user_id),
+                view=view,
             )
         else:
             await interaction.response.defer()
@@ -322,6 +332,56 @@ class DiagnosticoView(discord.ui.View):
             msgs.get(self.step_index, "Ótimo, problema resolvido!"), ephemeral=True
         )
         await _finalizar_resolvido(interaction, cfg["role_id"])
+
+
+class PrintScreenView(discord.ui.View):
+    """Confirma se o solicitante anexou um print antes da escalada final."""
+
+    def __init__(self, sistema: str, step_index: int, original_user_id: int):
+        super().__init__(timeout=None)
+        self.sistema = sistema
+        self.step_index = step_index
+        self.original_user_id = original_user_id
+
+    async def _check_user(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.original_user_id:
+            await interaction.response.send_message(
+                "Apenas o solicitante pode interagir aqui.", ephemeral=True
+            )
+            return False
+        return True
+
+    async def _continuar(self, interaction: discord.Interaction, resposta: str) -> None:
+        if not await self._check_user(interaction):
+            return
+
+        cfg = SISTEMAS_CONFIG[self.sistema]
+        steps = cfg["steps"]
+        _update_step(interaction.channel.id, steps[self.step_index]["step_key"], resposta)
+        await _disable_view(interaction, self)
+        await interaction.response.defer()
+
+        next_index = self.step_index + 1
+        if next_index < len(steps):
+            pergunta = _get_pergunta(self.sistema, steps[next_index])
+            view = (
+                PrintScreenView(self.sistema, next_index, self.original_user_id)
+                if steps[next_index].get("view") == "print"
+                else DiagnosticoView(self.sistema, next_index, self.original_user_id)
+            )
+            await interaction.channel.send(pergunta, view=view)
+            return
+
+        from . import _escalada_final
+        await _escalada_final(interaction, self.sistema, cfg)
+
+    @discord.ui.button(label="Não tem print", style=discord.ButtonStyle.danger)
+    async def nao_tem_print(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._continuar(interaction, "nao_tem_print")
+
+    @discord.ui.button(label="Já enviei", style=discord.ButtonStyle.primary)
+    async def ja_enviei(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._continuar(interaction, "ja_enviei")
 
 
 # ── ProblemTypeView ───────────────────────────────────────────────────────────
