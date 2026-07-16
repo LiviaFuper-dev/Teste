@@ -150,21 +150,70 @@ def _get_pergunta(sistema: str, step: dict) -> str:
     return step["pergunta_padrao"]
 
 
+def _sistemas_cfg(guild_id: int | None) -> dict:
+    if not guild_id:
+        return {}
+    return config.SERVIDORES.get(guild_id, {}).get("sistemas", {})
+
+
+_DEFAULT_ROLE_KEYS = {
+    config.CHATGURU_ROLE_ID: "chatguru_role_id",
+    config.WHOM_ROLE_ID: "whom_role_id",
+    config.CLICKUP_SUPPORT_ROLE_ID: "clickup_support_role_id",
+    config.EMAIL_MLR_ROLE_ID: "email_mlr_role_id",
+    config.EMAIL_GMAIL_ROLE_ID: "email_gmail_role_id",
+    config.TRESCEPLUS_ROLE_ID: "tresceplus_role_id",
+    config.ADMIN_EXTRA_ROLE_ID: "admin_extra_role_id",
+}
+
+
+def role_id_for(guild_id: int | None, key: str, default: int) -> int:
+    raw = _sistemas_cfg(guild_id).get(key)
+    return int(raw) if raw else default
+
+
+def role_id_for_system(guild_id: int | None, sistema: str) -> int:
+    cfg = SISTEMAS_CONFIG[sistema]
+    key_by_system = {
+        "ChatGuru": "chatguru_role_id",
+        "Whom": "whom_role_id",
+        "Clickup": "clickup_support_role_id",
+    }
+    return role_id_for(guild_id, key_by_system.get(sistema, ""), cfg["role_id"])
+
+
+def _resolve_role_id(guild: discord.Guild | None, role_id: int) -> int:
+    if not guild:
+        return role_id
+
+    cfg = _sistemas_cfg(guild.id)
+    key = _DEFAULT_ROLE_KEYS.get(role_id)
+    if key and cfg.get(key):
+        return int(cfg[key])
+
+    if guild.get_role(role_id):
+        return role_id
+
+    fallback = cfg.get("cargo_ti")
+    return int(fallback) if fallback else role_id
+
+
 async def _ping_role(
     thread: discord.Thread,
     guild: discord.Guild,
     role_id: int,
     msg: str,
 ) -> None:
-    role = guild.get_role(role_id) if guild else None
+    resolved_role_id = _resolve_role_id(guild, role_id)
+    role = guild.get_role(resolved_role_id) if guild else None
     try:
         await thread.send(msg, allowed_mentions=discord.AllowedMentions(roles=True))
         if role:
             await thread.send(role.mention, allowed_mentions=discord.AllowedMentions(roles=True))
         else:
-            await thread.send(f"<@&{role_id}>", allowed_mentions=discord.AllowedMentions(roles=True))
+            await thread.send(f"<@&{resolved_role_id}>", allowed_mentions=discord.AllowedMentions(roles=True))
     except Exception as e:
-        print(f"[SISTEMAS] Erro ao pingar role {role_id}: {e}")
+        print(f"[SISTEMAS] Erro ao pingar role {resolved_role_id}: {e}")
 
 
 async def _disable_view(interaction: discord.Interaction, view: discord.ui.View) -> None:
@@ -187,7 +236,8 @@ async def _finalizar_resolvido(interaction: discord.Interaction, role_id: int) -
         await thread.remove_user(interaction.user)
     except Exception as e:
         print(f"[SISTEMAS] Não foi possível remover usuário da thread: {e}")
-    role = guild.get_role(role_id) if guild else None
+    resolved_role_id = _resolve_role_id(guild, role_id)
+    role = guild.get_role(resolved_role_id) if guild else None
     try:
         if role:
             await thread.send(
@@ -196,7 +246,7 @@ async def _finalizar_resolvido(interaction: discord.Interaction, role_id: int) -
             )
         else:
             await thread.send(
-                f"✅ Chamado resolvido pelo usuário. (cargo <@&{role_id}> não encontrado)"
+                f"✅ Chamado resolvido pelo usuário. (cargo <@&{resolved_role_id}> não encontrado)"
             )
     except Exception as e:
         print(f"[SISTEMAS] Erro ao pingar cargo após resolução: {e}")
@@ -223,13 +273,13 @@ async def _send_to_n8n(payload: dict) -> bool:
 def _allowed_roles(guild_id: int) -> set[int]:
     cfg = config.SERVIDORES.get(guild_id, {}).get("sistemas", {})
     roles = {
-        config.CHATGURU_ROLE_ID,
-        config.WHOM_ROLE_ID,
-        config.CLICKUP_SUPPORT_ROLE_ID,
-        config.EMAIL_MLR_ROLE_ID,
-        config.EMAIL_GMAIL_ROLE_ID,
-        config.TRESCEPLUS_ROLE_ID,
-        config.ADMIN_EXTRA_ROLE_ID,
+        role_id_for(guild_id, "chatguru_role_id", config.CHATGURU_ROLE_ID),
+        role_id_for(guild_id, "whom_role_id", config.WHOM_ROLE_ID),
+        role_id_for(guild_id, "clickup_support_role_id", config.CLICKUP_SUPPORT_ROLE_ID),
+        role_id_for(guild_id, "email_mlr_role_id", config.EMAIL_MLR_ROLE_ID),
+        role_id_for(guild_id, "email_gmail_role_id", config.EMAIL_GMAIL_ROLE_ID),
+        role_id_for(guild_id, "tresceplus_role_id", config.TRESCEPLUS_ROLE_ID),
+        role_id_for(guild_id, "admin_extra_role_id", config.ADMIN_EXTRA_ROLE_ID),
     }
     cargo_ti = cfg.get("cargo_ti")
     if cargo_ti:
@@ -331,7 +381,10 @@ class DiagnosticoView(discord.ui.View):
         await interaction.response.send_message(
             msgs.get(self.step_index, "Ótimo, problema resolvido!"), ephemeral=True
         )
-        await _finalizar_resolvido(interaction, cfg["role_id"])
+        await _finalizar_resolvido(
+            interaction,
+            role_id_for_system(interaction.guild.id if interaction.guild else None, self.sistema),
+        )
 
 
 class PrintScreenView(discord.ui.View):

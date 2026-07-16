@@ -2,9 +2,9 @@
 main.py — Entry point do Caveira Unificado.
 
 Auto-fechamento por inatividade:
-  - Tópicos "1 - *" (sistemas) → movidos para #chamados-pendentes após 24h sem interação
-  - Tópicos "2 - *" (equipamentos/TI) → movidos para #chamados-pendentes após 24h sem interação
-  - Tópicos "3 - *" (recuperar contato) → movidos para #chamados-pendentes após 24h sem interação
+  - Tópicos "1 - *" (sistemas) → movidos para #chamados-pendentes após 8h sem interação
+  - Tópicos "2 - *" (equipamentos/TI) → movidos para #chamados-pendentes após 8h sem interação
+  - Tópicos "3 - *" (recuperar contato) → movidos para #chamados-pendentes após 8h sem interação
   - Thread IDs já processados são salvos em data/thread_auto_actions.json
     para não serem processados novamente após reinício do bot.
 """
@@ -35,11 +35,11 @@ intents.guilds = True
 
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
-PENDING_INACTIVITY_HOURS = 24
+PENDING_INACTIVITY_HOURS = 8
 # Data de corte do monitor de pendentes.
 # Chamados criados antes desta data sao historico antigo e nunca sao movidos
 # automaticamente para #chamados-pendentes. Chamados criados a partir daqui
-# seguem a regra normal: se ficarem 24h sem interacao, viram pendencia.
+# seguem a regra normal: se ficarem 8h sem interacao, viram pendencia.
 PENDING_IGNORE_BEFORE = datetime(2026, 7, 8, tzinfo=timezone.utc)
 _HANDLED_FILE = Path("data/thread_auto_actions.json")
 _HANDLED_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -241,6 +241,27 @@ async def _archive_original_thread(thread: discord.Thread) -> None:
         print(f"[PENDENTES] Erro ao arquivar '{thread.name}': {e}")
 
 
+def _responsavel_sistemas_role_id(guild: discord.Guild, sistema: str) -> int | None:
+    cfg = config.SERVIDORES.get(guild.id, {}).get("sistemas", {})
+    key_by_system = {
+        "ChatGuru": "chatguru_role_id",
+        "Whom": "whom_role_id",
+        "Clickup": "clickup_support_role_id",
+    }
+    default_by_system = {
+        "ChatGuru": config.CHATGURU_ROLE_ID,
+        "Whom": config.WHOM_ROLE_ID,
+        "Clickup": config.CLICKUP_SUPPORT_ROLE_ID,
+    }
+
+    role_id = cfg.get(key_by_system.get(sistema, "")) or default_by_system.get(sistema)
+    if role_id and guild.get_role(int(role_id)):
+        return int(role_id)
+
+    fallback = cfg.get("cargo_ti")
+    return int(fallback) if fallback else (int(role_id) if role_id else None)
+
+
 async def _auto_pendenciar_sistemas(thread: discord.Thread, guild: discord.Guild) -> bool:
     """Move um chamado de sistemas inativo para o painel de pendentes."""
     from modules.sistemas._engine import _allowed_roles, pop_payload
@@ -259,10 +280,10 @@ async def _auto_pendenciar_sistemas(thread: discord.Thread, guild: discord.Guild
 
     parts = thread.name.split(" - ")
     sistema = payload.get("system") if payload else (parts[1] if len(parts) > 1 else "Sistemas")
-    motivo = payload.get("description") if payload else "Chamado ficou 24h sem interação."
+    motivo = payload.get("description") if payload else "Chamado ficou 8h sem interação."
     if payload and sistema in {"E-mail", "Google Drive"}:
         steps = payload.get("steps", {})
-        resumo = ["Chamado ficou 24h sem interação."]
+        resumo = ["Chamado ficou 8h sem interação."]
         if steps.get("dominio_detectado"):
             resumo.append(f"E-mail selecionado: {steps['dominio_detectado']}")
         if steps.get("email_usuario"):
@@ -272,11 +293,7 @@ async def _auto_pendenciar_sistemas(thread: discord.Thread, guild: discord.Guild
         motivo = "\n".join(resumo)
     user_id = int(payload.get("user_id")) if payload and payload.get("user_id") else (member.id if member else 0)
     user_name = payload.get("user_name") if payload else (member.display_name if member else "Usuario nao identificado")
-
-    if not chamado_pendente_existe(thread.id):
-        await thread.send(
-            "⚠️ Este chamado ficou 24 horas sem interação e foi movido para o painel de chamados pendentes."
-        )
+    ja_tem_pendente = chamado_pendente_existe(thread.id)
 
     canal_logs_id = config.SERVIDORES.get(guild.id, {}).get("canal_logs")
     log_url = None
@@ -286,7 +303,7 @@ async def _auto_pendenciar_sistemas(thread: discord.Thread, guild: discord.Guild
             guild,
             canal_logs_id,
             prefixo_log="[SISTEMAS]",
-            header_extra="=== Chamado pendente (Sistemas) ===\nMotivo: Inatividade 24h",
+            header_extra="=== Chamado pendente (Sistemas) ===\nMotivo: Inatividade 8h",
         )
 
     ok = await criar_card_pendente(
@@ -297,12 +314,18 @@ async def _auto_pendenciar_sistemas(thread: discord.Thread, guild: discord.Guild
         sistema=sistema,
         user_id=user_id,
         user_name=user_name,
-        motivo=motivo or "Chamado ficou 24h sem interação.",
+        motivo=motivo or "Chamado ficou 8h sem interação.",
         log_url=log_url,
         payload=payload,
+        responsavel_role_id=_responsavel_sistemas_role_id(guild, sistema),
     )
     if not ok:
         return False
+
+    if not ja_tem_pendente:
+        await thread.send(
+            "⚠️ Este chamado ficou 8 horas sem interação e foi movido para o painel de chamados pendentes."
+        )
 
     await _archive_original_thread(thread)
     print(f"[PENDENTES] Sistemas pendente: '{thread.name}'")
@@ -316,12 +339,15 @@ async def _auto_pendenciar_ti(thread: discord.Thread, guild: discord.Guild) -> b
     cargo_ti = ti_module._get_cargo_ti(guild, guild.id)
     allowed = {cargo_ti.id} if cargo_ti else set()
     member = await _guess_thread_user(thread, guild, allowed)
-    motivo = ti_module.pop_thread_motivo(thread.id) or "Chamado de TI ficou 24h sem interação."
-
-    if not chamado_pendente_existe(thread.id):
-        await thread.send(
-            "⚠️ Este chamado ficou 24 horas sem interação e foi movido para o painel de chamados pendentes."
-        )
+    motivo = ti_module.pop_thread_motivo(thread.id) or "Chamado de TI ficou 8h sem interação."
+    solicitante = ti_module.pop_thread_solicitante(thread.id)
+    if guild.id == 1409995330795081738 and solicitante:
+        user_id = solicitante[0]
+        user_name = solicitante[1]
+    else:
+        user_id = member.id if member else 0
+        user_name = member.display_name if member else "Usuario nao identificado"
+    ja_tem_pendente = chamado_pendente_existe(thread.id)
 
     canal_logs_id = config.SERVIDORES.get(guild.id, {}).get("canal_logs")
     log_url = None
@@ -331,7 +357,7 @@ async def _auto_pendenciar_ti(thread: discord.Thread, guild: discord.Guild) -> b
             guild,
             canal_logs_id,
             prefixo_log="[TI]",
-            header_extra="=== Chamado pendente (TI) ===\nMotivo: Inatividade 24h",
+            header_extra="=== Chamado pendente (TI) ===\nMotivo: Inatividade 8h",
         )
 
     ok = await criar_card_pendente(
@@ -340,13 +366,19 @@ async def _auto_pendenciar_ti(thread: discord.Thread, guild: discord.Guild) -> b
         kind="ti",
         tipo_label="Equipamentos/TI",
         sistema="Equipamentos",
-        user_id=member.id if member else 0,
-        user_name=member.display_name if member else "Usuario nao identificado",
+        user_id=user_id,
+        user_name=user_name,
         motivo=motivo,
         log_url=log_url,
+        responsavel_role_id=config.SERVIDORES.get(guild.id, {}).get("ti", {}).get("cargo_equipamentos") or config.SERVIDORES.get(guild.id, {}).get("ti", {}).get("cargo_ti"),
     )
     if not ok:
         return False
+
+    if not ja_tem_pendente:
+        await thread.send(
+            "⚠️ Este chamado ficou 8 horas sem interação e foi movido para o painel de chamados pendentes."
+        )
 
     await _archive_original_thread(thread)
     print(f"[PENDENTES] TI pendente: '{thread.name}'")
@@ -392,12 +424,8 @@ async def _auto_pendenciar_contato(thread: discord.Thread, guild: discord.Guild)
     _THREAD_ACTIVITY.pop(thread.id, None)
     member = await _guess_thread_user(thread, guild, set())
     detalhes = await _extract_contato_resumo(thread)
-    motivo = f"Chamado de recuperação de contato ficou 24h sem interação.\n{detalhes}"
-
-    if not chamado_pendente_existe(thread.id):
-        await thread.send(
-            "⚠️ Este chamado ficou 24 horas sem interação e foi movido para o painel de chamados pendentes."
-        )
+    motivo = f"Chamado de recuperação de contato ficou 8h sem interação.\n{detalhes}"
+    ja_tem_pendente = chamado_pendente_existe(thread.id)
 
     canal_logs_id = config.SERVIDORES.get(guild.id, {}).get("canal_logs")
     log_url = None
@@ -407,7 +435,7 @@ async def _auto_pendenciar_contato(thread: discord.Thread, guild: discord.Guild)
             guild,
             canal_logs_id,
             prefixo_log="[CONTATO]",
-            header_extra="=== Chamado pendente (Contato) ===\nMotivo: Inatividade 24h",
+            header_extra="=== Chamado pendente (Contato) ===\nMotivo: Inatividade 8h",
         )
 
     ok = await criar_card_pendente(
@@ -420,9 +448,15 @@ async def _auto_pendenciar_contato(thread: discord.Thread, guild: discord.Guild)
         user_name=member.display_name if member else "Usuario nao identificado",
         motivo=motivo,
         log_url=log_url,
+        responsavel_role_id=config.SERVIDORES.get(guild.id, {}).get("contato", {}).get("keeper_role_id"),
     )
     if not ok:
         return False
+
+    if not ja_tem_pendente:
+        await thread.send(
+            "⚠️ Este chamado ficou 8 horas sem interação e foi movido para o painel de chamados pendentes."
+        )
 
     await _archive_original_thread(thread)
     print(f"[PENDENTES] Contato pendente: '{thread.name}'")
