@@ -3,7 +3,7 @@ utils/pending_chamados.py — Painel de chamados pendentes por inatividade.
 
 Fluxo:
   - Chamados de Sistemas, Equipamentos/TI e Recuperar Contato ficam ativos na thread original.
-  - Após 8h sem interação, o main.py gera log, cria um card em #chamados-pendentes
+  - Após 24h sem interação, o main.py gera log, cria um card em #chamados-pendentes
     e arquiva a thread original.
   - O card permite ver histórico, retomar o chamado em uma nova thread ou excluir o pendente.
   - Ao retomar, dados importantes do atendimento anterior são restaurados para o fluxo continuar.
@@ -83,145 +83,6 @@ def _split_contato_motivo(motivo: str) -> tuple[str, str | None, str | None]:
     return resumo, nome, cpf
 
 
-def _nivel_urgencia_equipamentos(record: dict[str, Any]) -> str | None:
-    original_name = record.get("thread_name") or record.get("original_thread_name") or ""
-    parts = [part.strip() for part in original_name.split(" - ")]
-    if len(parts) >= 2 and parts[0] == "2":
-        return parts[1]
-    return None
-
-
-def _format_created_at(value: str | None) -> str:
-    if not value:
-        return "-"
-    try:
-        created_at = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
-        return created_at.astimezone(_BR_TIMEZONE).strftime("%d/%m/%Y %H:%M")
-    except Exception:
-        return value
-
-
-def _log_line(label: str, value: Any, *, limit: int = 700) -> str:
-    text = str(value or "-").replace("\r", " ").replace("\n", " ").strip()
-    if len(text) > limit:
-        text = text[: limit - 3] + "..."
-    return f"{label}: {text}"
-
-
-def _message_author_name(message: discord.Message) -> str:
-    return getattr(message.author, "display_name", None) or message.author.name
-
-
-def _message_timestamp(message: discord.Message) -> str:
-    return message.created_at.astimezone(_BR_TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
-
-
-def _replace_mentions(message: discord.Message, text: str) -> str:
-    for role in message.role_mentions:
-        text = text.replace(f"<@&{role.id}>", f"@{role.name}")
-    for user in message.mentions:
-        text = text.replace(f"<@{user.id}>", f"@{user.display_name}")
-        text = text.replace(f"<@!{user.id}>", f"@{user.display_name}")
-    return text
-
-
-def _safe_link_label(value: str) -> str:
-    return value.replace("[", "(").replace("]", ")").replace("\n", " ").strip() or "arquivo"
-
-
-def _message_text(message: discord.Message) -> str:
-    parts: list[str] = []
-    content = (message.content or "").replace("\r", "").strip()
-    if content:
-        parts.append(content)
-
-    if message.embeds:
-        embed = message.embeds[0]
-        embed_parts = [
-            (embed.title or "").strip(),
-            (embed.description or "").strip(),
-        ]
-        for field in embed.fields[:3]:
-            embed_parts.append(f"{field.name}: {field.value}".strip())
-        embed_text = "\n".join(part for part in embed_parts if part).strip()
-        if embed_text:
-            parts.append(embed_text)
-
-    if message.attachments:
-        nomes = ", ".join(attachment.filename for attachment in message.attachments)
-        parts.append(f"[anexo enviado] {nomes}")
-
-    text = "\n".join(parts).strip() or "[mensagem sem texto]"
-    return _replace_mentions(message, text).replace("```", "'''")
-
-
-def _is_automatic_opening_message(message: discord.Message, text: str) -> bool:
-    if not message.author.bot:
-        return False
-
-    clean = text.strip()
-    if clean == "[mensagem sem texto]":
-        return True
-    if clean.startswith("**Solicitação de ") or clean.startswith("Solicitação de "):
-        return True
-    if "Chamado aberto" in clean and (
-        "Todos os participantes podem conversar" in clean
-        or "Este tópico será arquivado" in clean
-    ):
-        return True
-    return False
-
-
-async def _capture_thread_history(thread: discord.Thread, *, limit: int = 40) -> list[str]:
-    linhas: list[str] = []
-    try:
-        async for message in thread.history(limit=limit, oldest_first=True):
-            text = _message_text(message)
-            if _is_automatic_opening_message(message, text):
-                continue
-            if len(text) > 900:
-                text = text[:897] + "..."
-            linhas.append(f"[{_message_timestamp(message)}] {_message_author_name(message)}: {text}")
-    except Exception as e:
-        print(f"[PENDENTES] Erro ao capturar historico da thread {thread.id}: {e}")
-    return linhas
-
-
-async def _capture_thread_attachments(thread: discord.Thread, *, limit: int = 40) -> list[dict[str, str]]:
-    arquivos: list[dict[str, str]] = []
-    try:
-        async for message in thread.history(limit=limit, oldest_first=True):
-            if not message.attachments:
-                continue
-            timestamp = _message_timestamp(message)
-            author = _message_author_name(message)
-            for attachment in message.attachments:
-                arquivos.append(
-                    {
-                        "label": f"{timestamp} - {author} - {attachment.filename}",
-                        "url": attachment.url,
-                    }
-                )
-    except Exception as e:
-        print(f"[PENDENTES] Erro ao capturar anexos da thread {thread.id}: {e}")
-    return arquivos[:10]
-
-
-def _build_history_log(record: dict[str, Any]) -> str:
-    linhas = list(record.get("conversation_history") or [])
-    if not linhas:
-        linhas = [
-            "Historico da conversa nao foi salvo para este card.",
-            _log_line("Criado em", _format_created_at(record.get("created_at"))),
-            _log_line("Motivo", record.get("motivo") or "Sem resumo registrado."),
-        ]
-
-    historico = "=== Mensagens da Thread ===\n\n" + "\n".join(linhas)
-    if len(historico) > 3000:
-        historico = historico[:2997] + "..."
-    return historico
-
-
 def _build_embed(record: dict[str, Any]) -> discord.Embed:
     """Monta o card exibido em #chamados-pendentes."""
     motivo = record.get("motivo") or "Sem resumo registrado."
@@ -237,25 +98,17 @@ def _build_embed(record: dict[str, Any]) -> discord.Embed:
     historico = f"[#logs]({log_url})" if log_url else "#logs"
 
     linhas = [
-        f"**User:** {record.get('user_name') or 'Usuario nao identificado'}",
-        "",
         f"**Sistema:** {sistema}",
-    ]
-    if record.get("kind") == "ti":
-        nivel = _nivel_urgencia_equipamentos(record)
-        if nivel:
-            linhas.append(f"**Nível de urgência:** {nivel}")
-    linhas.extend([
         "**Status:** Aguardando retomada",
         f"**Histórico anterior:** {historico}",
         "",
-    ])
+    ]
 
     steps = (record.get("payload") or {}).get("steps", {})
     if record.get("kind") == "sistemas" and sistema in {"E-mail", "Google Drive"}:
         linhas.extend(
             [
-                f"**Resumo:** Chamado ficou 8h sem interação.",
+                f"**Resumo:** Chamado ficou 24h sem interação.",
                 f"**E-mail selecionado:** {steps.get('dominio_detectado', '-')}",
                 f"**E-mail informado:** {steps.get('email_usuario', '-')}",
                 f"**Problema relatado:** {steps.get('problema', '-')}",
@@ -269,17 +122,6 @@ def _build_embed(record: dict[str, Any]) -> discord.Embed:
             linhas.extend(["", f"**Nome do contato:** {nome_contato}"])
         if cpf_contato:
             linhas.append(f"**CPF do contato:** {cpf_contato}")
-
-    if record.get("history_visible"):
-        linhas.extend(["", "**Histórico:**", f"```text\n{_build_history_log(record)}\n```"])
-        arquivos = record.get("conversation_attachments") or []
-        if arquivos:
-            linhas.extend(["", "**Arquivos enviados:**"])
-            for arquivo in arquivos[:10]:
-                label = _safe_link_label(str(arquivo.get("label") or "arquivo"))
-                url = str(arquivo.get("url") or "").strip()
-                if url:
-                    linhas.append(f"- [{label}]({url})")
 
     return discord.Embed(
         title="Chamado Não Resolvido",
@@ -300,22 +142,17 @@ async def _delete_ephemeral_after(interaction: discord.Interaction, delay: int =
 class PendingChamadoView(discord.ui.View):
     """Botões persistentes usados nos cards do painel de chamados pendentes."""
 
-    def __init__(self, bot: discord.Client | None = None, history_visible: bool = False):
+    def __init__(self, bot: discord.Client | None = None):
         super().__init__(timeout=None)
         self.bot = bot
-        for item in self.children:
-            if isinstance(item, discord.ui.Button) and item.custom_id == "pendentes_ver_historico":
-                item.label = "▲ Ocultar Histórico" if history_visible else "▼ Ver Histórico"
 
     @discord.ui.button(
-        label="▼ Ver Histórico",
+        label="Ver Historico",
         style=discord.ButtonStyle.secondary,
         custom_id="pendentes_ver_historico",
     )
     async def ver_historico(self, interaction: discord.Interaction, button: discord.ui.Button):
-        pending = _load_pending()
-        record_key = str(interaction.message.id)
-        record = pending.get(record_key)
+        record = _load_pending().get(str(interaction.message.id))
         if not record:
             await interaction.response.send_message(
                 "Nao encontrei mais os dados desse chamado.", ephemeral=True
@@ -323,13 +160,13 @@ class PendingChamadoView(discord.ui.View):
             await _delete_ephemeral_after(interaction)
             return
 
-        record["history_visible"] = not bool(record.get("history_visible"))
-        pending[record_key] = record
-        _save_pending(pending)
-        await interaction.response.edit_message(
-            embed=_build_embed(record),
-            view=PendingChamadoView(self.bot, bool(record["history_visible"])),
-        )
+        log_url = record.get("log_url")
+        if log_url:
+            msg = f"Historico do chamado: {log_url}"
+        else:
+            msg = "Esse chamado ainda nao tem link de historico salvo no canal de logs."
+        await interaction.response.send_message(msg, ephemeral=True)
+        await _delete_ephemeral_after(interaction)
 
     @discord.ui.button(
         label="Retomar Chamado",
@@ -445,7 +282,7 @@ class PendingChamadoView(discord.ui.View):
                     f"📌 **Chamado Reaberto**\n\n"
                     f"Olá {user_label}, estamos retomando seu chamado anterior.\n\n"
                     f"**Sistema:** {sistema}\n"
-                    f"**Motivo:** Chamado ficou 8h sem interação.\n"
+                    f"**Motivo:** Chamado ficou 24h sem interação.\n"
                     f"**E-mail selecionado:** {steps.get('dominio_detectado', '-')}\n"
                     f"**E-mail informado:** {steps.get('email_usuario', '-')}\n"
                     f"**Problema relatado:** {steps.get('problema', '-')}\n"
@@ -542,7 +379,6 @@ async def criar_card_pendente(
     motivo: str,
     log_url: str | None,
     payload: dict[str, Any] | None = None,
-    responsavel_role_id: int | None = None,
 ) -> bool:
     """Cria o card persistente no painel e salva os dados para retomada posterior."""
     channel_id = _pending_channel_id(guild.id)
@@ -557,15 +393,6 @@ async def criar_card_pendente(
             print(f"[PENDENTES] Card ja existente para thread {thread.id}; ignorando duplicado.")
             return True
 
-    conversation_history = await _capture_thread_history(thread)
-    conversation_attachments = await _capture_thread_attachments(thread)
-    bot_name = getattr(guild.me, "display_name", None) or getattr(guild.me, "name", "Bot")
-    bot_timestamp = _now_brasilia().strftime("%Y-%m-%d %H:%M:%S")
-    if not any("ficou 8 horas sem interação" in line for line in conversation_history):
-        conversation_history.append(
-            f"[{bot_timestamp}] {bot_name}: ⚠️ Este chamado ficou 8 horas sem interação e foi movido para o painel de chamados pendentes."
-        )
-
     record = {
         "kind": kind,
         "tipo_label": tipo_label,
@@ -579,22 +406,16 @@ async def criar_card_pendente(
         "original_thread_name": thread.name,
         "thread_name": thread.name,
         "thread_url": getattr(thread, "jump_url", None),
-        "inativo_ha": "8h",
+        "inativo_ha": "24h",
         "created_at": datetime.datetime.utcnow().isoformat() + "Z",
         "payload": payload,
-        "responsavel_role_id": responsavel_role_id,
-        "conversation_history": conversation_history,
-        "conversation_attachments": conversation_attachments,
     }
 
     try:
-        content = f"<@&{responsavel_role_id}>" if responsavel_role_id else None
         msg = await pending_channel.send(
-            content=content,
             embed=_build_embed(record),
             view=PendingChamadoView(),
-            silent=False,
-            allowed_mentions=discord.AllowedMentions(roles=True),
+            silent=True,
         )
     except Exception as e:
         print(f"[PENDENTES] Erro ao criar card pendente: {e}")
@@ -603,4 +424,3 @@ async def criar_card_pendente(
     pending[str(msg.id)] = record
     _save_pending(pending)
     return True
-

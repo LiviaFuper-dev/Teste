@@ -27,7 +27,6 @@ from utils.thread_utils import safe_join_thread, remove_members_except
 # _BR_TIMEZONE padroniza datas e logs no horário de Brasília.
 
 _THREAD_MOTIVO: dict[int, str] = {}
-_THREAD_SOLICITANTE: dict[int, tuple[int, str]] = {}
 _LOGS_ACTIVE_THREADS: set[int] = set()
 _BR_TIMEZONE = datetime.timezone(datetime.timedelta(hours=-3))
 
@@ -38,10 +37,6 @@ def _formatar_data_br(ts: datetime.datetime) -> str:
 
 def pop_thread_motivo(thread_id: int) -> str:
     return _THREAD_MOTIVO.pop(thread_id, "")
-
-
-def pop_thread_solicitante(thread_id: int) -> tuple[int, str] | None:
-    return _THREAD_SOLICITANTE.pop(thread_id, None)
 
 
 def register_thread_motivo(thread_id: int, motivo: str) -> None:
@@ -212,7 +207,6 @@ async def _criar_chamado(
         pass
 
     _THREAD_MOTIVO[thread.id] = descricao
-    _THREAD_SOLICITANTE[thread.id] = (interaction.user.id, interaction.user.display_name)
 
     try:
         await thread.send(
@@ -236,7 +230,7 @@ async def _criar_chamado(
             f"Olá {interaction.user.display_name}, por favor, acompanhe este chamado.\n\n"
             "💬 **Todos os participantes podem conversar normalmente.**\n"
             "🔒 **Somente o T.I. pode arquivar ou executar comandos administrativos.**\n\n"
-            "⏳ Este tópico será movido para chamados pendentes após 8 h de inatividade."
+            "⏳ Este tópico será arquivado automaticamente após 24 h de inatividade."
         ),
         color=color,
     )
@@ -524,7 +518,7 @@ async def _process_and_finalize(
 
 async def auto_fechar_ti(thread: discord.Thread, guild: discord.Guild) -> None:
     """
-    Tópico de TI inativo por 8h.
+    Tópico de TI inativo por 24h.
     Fecha automaticamente: gera logs, envia N8N e deleta a thread.
     """
     cargo_ti = _get_cargo_ti(guild, guild.id)
@@ -539,7 +533,7 @@ async def auto_fechar_ti(thread: discord.Thread, guild: discord.Guild) -> None:
     await remove_members_except(thread, guild, allowed)
 
     await thread.send(
-        "⏰ Este chamado atingiu **8 horas de inatividade**.\n"
+        "⏰ Este chamado atingiu **24 horas de inatividade**.\n"
         "Fechamento automático em andamento..."
     )
 
