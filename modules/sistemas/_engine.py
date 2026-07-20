@@ -134,6 +134,12 @@ SISTEMAS_CONFIG: dict[str, dict] = {
     },
 }
 
+_ROLE_KEY_BY_SYSTEM = {
+    "ChatGuru": "chatguru_role_id",
+    "Whom": "whom_role_id",
+    "Clickup": "clickup_support_role_id",
+}
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _update_step(thread_id: int, key: str, value: str) -> None:
@@ -202,6 +208,15 @@ async def _finalizar_resolvido(interaction: discord.Interaction, role_id: int) -
         print(f"[SISTEMAS] Erro ao pingar cargo após resolução: {e}")
 
 
+def role_id_for_system(guild_id: int, sistema: str) -> int:
+    cfg = config.SERVIDORES.get(guild_id, {}).get("sistemas", {})
+    role_key = _ROLE_KEY_BY_SYSTEM.get(sistema)
+    role_id = cfg.get(role_key) if role_key else None
+    if role_id:
+        return int(role_id)
+    return int(SISTEMAS_CONFIG[sistema]["role_id"])
+
+
 async def _send_to_n8n(payload: dict) -> bool:
     url = config.N8N_WEBHOOK_SISTEMAS
     if not url:
@@ -234,6 +249,10 @@ def _allowed_roles(guild_id: int) -> set[int]:
     cargo_ti = cfg.get("cargo_ti")
     if cargo_ti:
         roles.add(int(cargo_ti))
+    for key in _ROLE_KEY_BY_SYSTEM.values():
+        role_id = cfg.get(key)
+        if role_id:
+            roles.add(int(role_id))
     return roles
 
 
@@ -331,7 +350,10 @@ class DiagnosticoView(discord.ui.View):
         await interaction.response.send_message(
             msgs.get(self.step_index, "Ótimo, problema resolvido!"), ephemeral=True
         )
-        await _finalizar_resolvido(interaction, cfg["role_id"])
+        await _finalizar_resolvido(
+            interaction,
+            role_id_for_system(interaction.guild.id, self.sistema),
+        )
 
 
 class PrintScreenView(discord.ui.View):

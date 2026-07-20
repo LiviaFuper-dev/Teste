@@ -7,8 +7,7 @@ a engine redireciona para cá em vez do diagnóstico genérico.
 
 import discord
 
-import config
-from ._engine import _disable_view, _ping_role, _update_step
+from ._engine import _disable_view, _ping_role, _update_step, role_id_for_system
 
 
 class ClickupSlowView(discord.ui.View):
@@ -37,7 +36,7 @@ class ClickupSlowView(discord.ui.View):
             ephemeral=True,
         )
         from ._engine import _finalizar_resolvido
-        await _finalizar_resolvido(interaction, config.CLICKUP_SUPPORT_ROLE_ID)
+        await _finalizar_resolvido(interaction, role_id_for_system(interaction.guild.id, "Clickup"))
 
     @discord.ui.button(label="Não resolveu", style=discord.ButtonStyle.danger)
     async def nao_resolveu(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -49,6 +48,6 @@ class ClickupSlowView(discord.ui.View):
         await _ping_role(
             interaction.channel,
             interaction.guild,
-            config.CLICKUP_SUPPORT_ROLE_ID,
+            role_id_for_system(interaction.guild.id, "Clickup"),
             "🔧 O usuário tentou as dicas de lentidão mas o problema persiste. Equipe ClickUp, por favor verifiquem.",
         )

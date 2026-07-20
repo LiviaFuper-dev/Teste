@@ -7,8 +7,7 @@ Contém:
 
 import discord
 
-import config
-from ._engine import _update_step, _disable_view, _ping_role, _finalizar_resolvido
+from ._engine import _update_step, _disable_view, _ping_role, _finalizar_resolvido, role_id_for_system
 
 
 class WhomWarningView(discord.ui.View):
@@ -34,7 +33,7 @@ class WhomWarningView(discord.ui.View):
         await _disable_view(interaction, self)
         await interaction.response.defer()
         await _ping_role(
-            interaction.channel, interaction.guild, config.WHOM_ROLE_ID,
+            interaction.channel, interaction.guild, role_id_for_system(interaction.guild.id, "Whom"),
             "❗ O usuário informou que a extensão mostra aviso e as tentativas não funcionaram. Chamando equipe Whom:",
         )
 
@@ -45,4 +44,4 @@ class WhomWarningView(discord.ui.View):
         _update_step(interaction.channel.id, "aviso_extensao_whom", "resolveu")
         await _disable_view(interaction, self)
         await interaction.response.send_message("Ótimo, que bom que resolveu!", ephemeral=True)
-        await _finalizar_resolvido(interaction, config.WHOM_ROLE_ID)
+        await _finalizar_resolvido(interaction, role_id_for_system(interaction.guild.id, "Whom"))
