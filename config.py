@@ -103,11 +103,24 @@ SERVIDORES: dict[int, dict] = {
         "empresa_clickup": "fuper", # Usado para preencher o campo de empresa no payload enviado ao N8N/ClickUp.
         "canal_unificado": 1430934934402498742,
         "canal_logs": 1430935700387270898,
-        "modulos_ativos": ["ti"],
+        "canal_chamados_pendentes": 1526953247867408475,
+        "modulos_ativos": ["sistemas", "ti", "contato", "reembolso"],
 
         "ti": {
-            "cargo_ti":   1430932068484780184,
+            "cargo_ti":   1527014430544625750,
+            "cargo_equipamentos": 1527032496343093278,
             "canal_logs": 1430935700387270898,
+        },
+
+        "sistemas": {
+            "cargo_ti": 1527014430544625750,
+            "chatguru_role_id": 1527032284451045567,
+            "whom_role_id": 1527032413786607666,
+            "clickup_support_role_id": 1527032456971026465,
+        },
+
+        "contato": {
+            "keeper_role_id": 1527032526915371098,
         },
     },
 }
