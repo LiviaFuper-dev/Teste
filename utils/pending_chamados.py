@@ -347,13 +347,25 @@ class PendingChamadoView(discord.ui.View):
             await _delete_ephemeral_after(interaction)
             return
 
+        await interaction.response.defer()
         record["history_visible"] = not bool(record.get("history_visible"))
         pending[record_key] = record
         _save_pending(pending)
-        await interaction.response.edit_message(
-            embed=_build_embed(record),
-            view=PendingChamadoView(self.bot, bool(record["history_visible"])),
-        )
+        try:
+            await interaction.message.edit(
+                embed=_build_embed(record),
+                view=PendingChamadoView(self.bot, bool(record["history_visible"])),
+            )
+        except Exception as e:
+            record["history_visible"] = False
+            pending[record_key] = record
+            _save_pending(pending)
+            print(f"[PENDENTES] Erro ao alternar historico do chamado {record_key}: {e}")
+            await interaction.followup.send(
+                "Não consegui abrir o histórico desse card. O histórico pode estar grande demais.",
+                ephemeral=True,
+            )
+            await _delete_ephemeral_after(interaction)
 
     @discord.ui.button(
         label="Retomar Chamado",

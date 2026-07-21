@@ -232,6 +232,29 @@ async def _guess_thread_user(
     return fallback
 
 
+async def _guess_member_from_thread_name(thread: discord.Thread, guild: discord.Guild) -> discord.Member | None:
+    parts = [part.strip() for part in thread.name.split(" - ") if part.strip()]
+    if len(parts) < 3:
+        return None
+
+    expected_name = " - ".join(parts[2:]).removesuffix(" - retomado").strip().casefold()
+    if not expected_name:
+        return None
+
+    matches = [
+        member
+        for member in guild.members
+        if not member.bot
+        and (
+            member.display_name.casefold() == expected_name
+            or member.name.casefold() == expected_name
+            or member.global_name
+            and member.global_name.casefold() == expected_name
+        )
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
 async def _archive_original_thread(thread: discord.Thread) -> None:
     try:
         await thread.edit(archived=True, locked=True)
@@ -364,6 +387,14 @@ async def _auto_pendenciar_ti(thread: discord.Thread, guild: discord.Guild) -> b
     cargo_ti = ti_module._get_cargo_ti(guild, guild.id)
     allowed = {cargo_ti.id} if cargo_ti else set()
     member = await _guess_thread_user(thread, guild, allowed)
+    solicitante = ti_module.pop_thread_solicitante(thread.id)
+    if solicitante:
+        try:
+            member = guild.get_member(int(solicitante[0])) or await guild.fetch_member(int(solicitante[0]))
+        except Exception:
+            member = None
+    if member is None:
+        member = await _guess_member_from_thread_name(thread, guild)
     motivo = ti_module.pop_thread_motivo(thread.id) or "Chamado de TI ficou 8h sem interação."
     if member is None:
         print(f"[PENDENTES] TI sem solicitante identificado; ignorando '{thread.name}' ({thread.id}).")
@@ -389,8 +420,8 @@ async def _auto_pendenciar_ti(thread: discord.Thread, guild: discord.Guild) -> b
         kind="ti",
         tipo_label="Equipamentos/TI",
         sistema="Equipamentos",
-        user_id=member.id,
-        user_name=member.display_name,
+        user_id=int(solicitante[0]) if solicitante else member.id,
+        user_name=solicitante[1] if solicitante else member.display_name,
         motivo=motivo,
         log_url=log_url,
         responsavel_role_id=config.SERVIDORES.get(guild.id, {}).get("ti", {}).get("cargo_equipamentos")

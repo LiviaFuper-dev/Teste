@@ -27,6 +27,7 @@ from utils.thread_utils import safe_join_thread, remove_members_except
 # _BR_TIMEZONE padroniza datas e logs no horário de Brasília.
 
 _THREAD_MOTIVO: dict[int, str] = {}
+_THREAD_SOLICITANTE: dict[int, tuple[int, str]] = {}
 _LOGS_ACTIVE_THREADS: set[int] = set()
 _BR_TIMEZONE = datetime.timezone(datetime.timedelta(hours=-3))
 
@@ -41,6 +42,14 @@ def pop_thread_motivo(thread_id: int) -> str:
 
 def register_thread_motivo(thread_id: int, motivo: str) -> None:
     _THREAD_MOTIVO[thread_id] = motivo
+
+
+def pop_thread_solicitante(thread_id: int) -> tuple[int, str] | None:
+    return _THREAD_SOLICITANTE.pop(thread_id, None)
+
+
+def register_thread_solicitante(thread_id: int, user_id: int, user_name: str) -> None:
+    _THREAD_SOLICITANTE[thread_id] = (user_id, user_name)
 
 
 # Normaliza a empresa para o payload do N8N/ClickUp.
@@ -207,6 +216,7 @@ async def _criar_chamado(
         pass
 
     _THREAD_MOTIVO[thread.id] = descricao
+    _THREAD_SOLICITANTE[thread.id] = (interaction.user.id, interaction.user.display_name)
 
     try:
         await thread.send(
