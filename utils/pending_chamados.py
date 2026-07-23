@@ -239,90 +239,11 @@ def _build_history_log(record: dict[str, Any]) -> str:
     return historico
 
 
-def _resume_history_line(raw_line: str) -> str | None:
-    line = str(raw_line or "").strip()
-    if not line:
-        return None
-
-    if "] " in line:
-        line = line.split("] ", 1)[1].strip()
-    if ": " not in line:
-        return None
-
-    author, text = line.split(": ", 1)
-    author = author.strip()
-    text = text.replace("\n", " ").strip()
-    lower_text = text.lower()
-    lower_author = author.lower()
-
-    ignored_fragments = [
-        "[mensagem sem texto]",
-        "chamado aberto",
-        "chamado reaberto",
-        "solicitação de",
-        "solicitacao de",
-        "descrição do solicitante",
-        "descricao do solicitante",
-        "nível de urgência",
-        "nivel de urgencia",
-        "todos os participantes podem conversar",
-        "somente o t.i. pode arquivar",
-        "este tópico será arquivado",
-        "este topico sera arquivado",
-        "ficou 8 horas sem interação",
-        "ficou 24 horas sem interação",
-        "foi movido para o painel de chamados pendentes",
-    ]
-    if lower_author.startswith("caveira"):
-        return None
-    if any(fragment in lower_text for fragment in ignored_fragments):
-        return None
-    if text.startswith("@") and len(text.split()) <= 2:
-        return None
-
-    if len(text) > 260:
-        text = text[:257] + "..."
-    return f"{author}: {text}"
-
-
-def _resume_history_text(record: dict[str, Any], *, limit: int = 12) -> str:
-    linhas = [
-        clean
-        for raw in (record.get("conversation_history") or [])
-        if (clean := _resume_history_line(str(raw)))
-    ]
-    if not linhas:
-        return ""
-
-    historico = "\n".join(linhas[-limit:])
-    if len(historico) > 1700:
-        historico = historico[-1697:] + "..."
-    return f"**Histórico do chamado anterior:**\n```text\n{historico}\n```"
-
-
-def _resume_attachments_text(record: dict[str, Any], *, limit: int = 5) -> str:
-    arquivos = record.get("conversation_attachments") or []
-    linhas: list[str] = []
-    for arquivo in arquivos[:limit]:
-        label = _safe_link_label(str(arquivo.get("label") or "arquivo"))
-        url = str(arquivo.get("url") or "").strip()
-        if url:
-            linhas.append(f"- [{label}]({url})")
-
-    if not linhas:
-        return ""
-    return "**Anexos do chamado anterior:**\n" + "\n".join(linhas)
-
-
 def _historico_anterior_text(record: dict[str, Any]) -> str:
     log_url = record.get("log_url")
     if log_url:
         return f"**Histórico anterior:** {log_url}"
     return "**Histórico anterior:** #logs"
-
-
-def _opened_at_text(record: dict[str, Any]) -> str:
-    return f"**Chamado original aberto em:** {_format_created_at(record.get('created_at'))}"
 
 
 def _build_embed(record: dict[str, Any]) -> discord.Embed:
@@ -540,26 +461,18 @@ class PendingChamadoView(discord.ui.View):
                 print(f"[PENDENTES] Erro ao restaurar atividade de contato: {e}")
 
         user_label = user.mention if user else record.get("user_name", "usuario")
-        resume_history = _resume_history_text(record)
-        resume_attachments = _resume_attachments_text(record)
         if record.get("kind") == "contato":
             _, nome_contato, cpf_contato = _split_contato_motivo(record.get("motivo") or "")
             linhas = [
                 f"📌 **Chamado Reaberto**\n\n"
                 f"Olá {user_label}, estamos retomando seu chamado anterior.",
                 "",
-                _historico_anterior_text(record),
-                _opened_at_text(record),
-                "",
             ]
             if nome_contato:
                 linhas.append(f"**Nome do contato:** {nome_contato}")
             if cpf_contato:
                 linhas.append(f"**CPF do contato:** {cpf_contato}")
-            if resume_history:
-                linhas.extend(["", resume_history])
-            if resume_attachments:
-                linhas.extend(["", resume_attachments])
+            linhas.append(_historico_anterior_text(record))
             await thread.send("\n".join(linhas))
         elif record.get("kind") == "sistemas":
             sistema = _display_sistema(record)
@@ -570,13 +483,10 @@ class PendingChamadoView(discord.ui.View):
                     f"Olá {user_label}, estamos retomando seu chamado anterior.\n\n"
                     f"**Sistema:** {sistema}\n"
                     f"**Motivo:** Chamado ficou 8h sem interação.\n"
-                    f"{_historico_anterior_text(record)}\n"
-                    f"{_opened_at_text(record)}\n"
                     f"**E-mail selecionado:** {steps.get('dominio_detectado', '-')}\n"
                     f"**E-mail informado:** {steps.get('email_usuario', '-')}\n"
                     f"**Problema relatado:** {steps.get('problema', '-')}\n"
-                    f"{resume_history}\n"
-                    f"{resume_attachments}\n"
+                    f"{_historico_anterior_text(record)}\n"
                 )
             else:
                 await thread.send(
@@ -585,9 +495,6 @@ class PendingChamadoView(discord.ui.View):
                     f"**Sistema:** {sistema}\n"
                     f"**Motivo:** {record.get('motivo') or 'Sem resumo registrado.'}\n"
                     f"{_historico_anterior_text(record)}\n"
-                    f"{_opened_at_text(record)}\n"
-                    f"{resume_history}\n"
-                    f"{resume_attachments}\n"
                 )
         elif record.get("kind") == "ti":
             nivel = "-"
@@ -602,9 +509,6 @@ class PendingChamadoView(discord.ui.View):
                 f"**Motivo:** {record.get('motivo') or 'Sem resumo registrado.'}\n"
                 f"**Nível de urgência:** {nivel}\n"
                 f"{_historico_anterior_text(record)}\n"
-                f"{_opened_at_text(record)}\n"
-                f"{resume_history}\n"
-                f"{resume_attachments}\n"
             )
         else:
             await thread.send(
@@ -614,9 +518,6 @@ class PendingChamadoView(discord.ui.View):
                 f"- Sistema: {record.get('sistema', '-')}\n"
                 f"- Motivo: {record.get('motivo') or 'Sem resumo registrado.'}\n"
                 f"- Histórico anterior: {record.get('log_url') or '#logs'}\n"
-                f"- Chamado original aberto em: {_format_created_at(record.get('created_at'))}\n"
-                f"{resume_history}\n"
-                f"{resume_attachments}\n"
                 "O atendimento continua por aqui e sera concluido somente com o comando adequado."
             )
 

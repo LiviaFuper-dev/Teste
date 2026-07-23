@@ -36,12 +36,11 @@ intents.guilds = True
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 PENDING_INACTIVITY_HOURS = 8
-CONTACT_PENDING_INACTIVITY_HOURS = 24
 # Data de corte do monitor de pendentes.
 # Chamados criados antes desta data sao historico antigo e nunca sao movidos
 # automaticamente para #chamados-pendentes. Chamados criados a partir daqui
-# seguem a regra normal: Sistemas/Equipamentos em 8h e Recuperacao de Contato em 24h.
-PENDING_IGNORE_BEFORE = datetime(2026, 7, 23, 15, 0, tzinfo=timezone.utc)
+# seguem a regra normal: se ficarem 8h sem interacao, viram pendencia.
+PENDING_IGNORE_BEFORE = datetime(2026, 7, 20, 12, 50, tzinfo=timezone.utc)
 _HANDLED_FILE = Path("data/thread_auto_actions.json")
 _HANDLED_FILE.parent.mkdir(parents=True, exist_ok=True)
 
@@ -116,9 +115,7 @@ async def auto_fechar_inativos():
     Varre tópicos ativos e move chamados abandonados para #chamados-pendentes.
     Os comandos manuais (!sistema, !logs, !contato) continuam finalizando na hora.
     """
-    now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(hours=PENDING_INACTIVITY_HOURS)
-    contato_cutoff = now - timedelta(hours=CONTACT_PENDING_INACTIVITY_HOURS)
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=PENDING_INACTIVITY_HOURS)
     handled = _load_handled()
     changed = False
 
@@ -133,6 +130,16 @@ async def auto_fechar_inativos():
                 threads_by_id[thread.id] = thread
         except Exception:
             pass
+
+        canal_unificado_id = config.SERVIDORES.get(guild_id, {}).get("canal_unificado")
+        parent = guild.get_channel(canal_unificado_id) if canal_unificado_id else None
+        if parent and hasattr(parent, "archived_threads"):
+            for private in (True, False):
+                try:
+                    async for thread in parent.archived_threads(limit=None, private=private):
+                        threads_by_id[thread.id] = thread
+                except Exception as e:
+                    print(f"[AUTO-CLOSE] Erro ao buscar threads arquivadas em {guild.id}: {e}")
 
         threads = list(threads_by_id.values())
 
@@ -150,8 +157,12 @@ async def auto_fechar_inativos():
                 if created_at < PENDING_IGNORE_BEFORE:
                     continue
 
-                if thread.archived or getattr(thread, "locked", False):
-                    continue
+                if thread.archived:
+                    try:
+                        await thread.edit(archived=False)
+                    except Exception as e:
+                        print(f"[AUTO-CLOSE] Nao foi possivel reabrir thread arquivada {thread.id}: {e}")
+                        continue
 
                 if name.startswith("3 -"):
                     from modules.contato import get_thread_activity, is_thread_finalizada
@@ -167,8 +178,7 @@ async def auto_fechar_inativos():
                         payload_ts = _payload_last_interaction(thread.id)
                         if payload_ts and payload_ts > ultima:
                             ultima = payload_ts
-                limite_inatividade = contato_cutoff if name.startswith("3 -") else cutoff
-                if ultima > limite_inatividade:
+                if ultima > cutoff:
                     continue
 
                 print(f"[AUTO-CLOSE] Inativo: '{thread.name}' ({thread.id})")
@@ -473,7 +483,7 @@ async def _auto_pendenciar_contato(thread: discord.Thread, guild: discord.Guild)
         return False
     ja_tem_pendente = chamado_pendente_existe(thread.id)
     detalhes = await _extract_contato_resumo(thread)
-    motivo = f"Chamado de recuperação de contato ficou 24h sem interação.\n{detalhes}"
+    motivo = f"Chamado de recuperação de contato ficou 8h sem interação.\n{detalhes}"
 
     canal_logs_id = config.SERVIDORES.get(guild.id, {}).get("canal_logs")
     log_url = None
@@ -483,7 +493,7 @@ async def _auto_pendenciar_contato(thread: discord.Thread, guild: discord.Guild)
             guild,
             canal_logs_id,
             prefixo_log="[CONTATO]",
-            header_extra="=== Chamado pendente (Contato) ===\nMotivo: Inatividade 24h",
+            header_extra="=== Chamado pendente (Contato) ===\nMotivo: Inatividade 8h",
         )
 
     ok = await criar_card_pendente(
@@ -503,7 +513,7 @@ async def _auto_pendenciar_contato(thread: discord.Thread, guild: discord.Guild)
 
     if not ja_tem_pendente:
         await thread.send(
-            "⚠️ Este chamado ficou 24 horas sem interação e foi movido para o painel de chamados pendentes."
+            "⚠️ Este chamado ficou 8 horas sem interação e foi movido para o painel de chamados pendentes."
         )
 
     await _archive_original_thread(thread)
@@ -693,11 +703,7 @@ async def on_ready():
 
     if not auto_fechar_inativos.is_running():
         auto_fechar_inativos.start()
-        print(
-            "✅ Monitor de pendentes iniciado "
-            f"(Sistemas/Equipamentos: {PENDING_INACTIVITY_HOURS}h; "
-            f"Recuperação de Contato: {CONTACT_PENDING_INACTIVITY_HOURS}h)."
-        )
+        print(f"✅ Monitor de pendentes iniciado (inatividade: {PENDING_INACTIVITY_HOURS}h).")
 
     for guild_id, srv_cfg in config.SERVIDORES.items():
         nome = srv_cfg.get("nome", str(guild_id))
