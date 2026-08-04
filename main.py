@@ -41,8 +41,8 @@ PENDING_INACTIVITY_HOURS = 8
 # automaticamente para #chamados-pendentes. Chamados criados a partir daqui
 # seguem a regra normal: Sistemas/Equipamentos em 8h.
 # Recuperacao de Contato nao vai para pendentes; o fechamento ocorre somente apos !contato.
-# 04/08/2026 13:00 no horario de Brasilia = 04/08/2026 16:00 UTC.
-PENDING_IGNORE_BEFORE = datetime(2026, 8, 4, 16, 0, tzinfo=timezone.utc)
+# 04/08/2026 14:38 no horario de Brasilia = 04/08/2026 17:38 UTC.
+PENDING_IGNORE_BEFORE = datetime(2026, 8, 4, 17, 38, tzinfo=timezone.utc)
 _HANDLED_FILE = Path("data/thread_auto_actions.json")
 _HANDLED_FILE.parent.mkdir(parents=True, exist_ok=True)
 
