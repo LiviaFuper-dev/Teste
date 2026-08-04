@@ -36,11 +36,11 @@ intents.guilds = True
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 PENDING_INACTIVITY_HOURS = 8
-CONTACT_PENDING_INACTIVITY_HOURS = 24
 # Data de corte do monitor de pendentes.
 # Chamados criados antes desta data sao historico antigo e nunca sao movidos
 # automaticamente para #chamados-pendentes. Chamados criados a partir daqui
-# seguem a regra normal: Sistemas/Equipamentos em 8h e Recuperacao de Contato em 24h.
+# seguem a regra normal: Sistemas/Equipamentos em 8h.
+# Recuperacao de Contato nao vai para pendentes; o fechamento ocorre somente apos !contato.
 # 04/08/2026 11:00 no horario de Brasilia = 04/08/2026 14:00 UTC.
 PENDING_IGNORE_BEFORE = datetime(2026, 8, 4, 14, 0, tzinfo=timezone.utc)
 _HANDLED_FILE = Path("data/thread_auto_actions.json")
@@ -119,7 +119,6 @@ async def auto_fechar_inativos():
     """
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(hours=PENDING_INACTIVITY_HOURS)
-    contato_cutoff = now - timedelta(hours=CONTACT_PENDING_INACTIVITY_HOURS)
     handled = _load_handled()
     changed = False
 
@@ -143,7 +142,9 @@ async def auto_fechar_inativos():
                     continue
 
                 name = thread.name.strip()
-                if not (name.startswith("1 -") or name.startswith("2 -") or name.startswith("3 -")):
+                if name.startswith("3 -"):
+                    continue
+                if not (name.startswith("1 -") or name.startswith("2 -")):
                     continue
 
                 created_at = thread.created_at or datetime.now(timezone.utc)
@@ -154,22 +155,12 @@ async def auto_fechar_inativos():
                 if thread.archived or getattr(thread, "locked", False):
                     continue
 
-                if name.startswith("3 -"):
-                    from modules.contato import get_thread_activity, is_thread_finalizada
-                    if is_thread_finalizada(thread.id):
-                        continue
-                    ultima = await _ultima_atividade_humana(thread)
-                    activity_ts = get_thread_activity(thread.id)
-                    if activity_ts and activity_ts > ultima:
-                        ultima = activity_ts
-                else:
-                    ultima = await _ultima_atividade_humana(thread)
-                    if name.startswith("1 -"):
-                        payload_ts = _payload_last_interaction(thread.id)
-                        if payload_ts and payload_ts > ultima:
-                            ultima = payload_ts
-                limite_inatividade = contato_cutoff if name.startswith("3 -") else cutoff
-                if ultima > limite_inatividade:
+                ultima = await _ultima_atividade_humana(thread)
+                if name.startswith("1 -"):
+                    payload_ts = _payload_last_interaction(thread.id)
+                    if payload_ts and payload_ts > ultima:
+                        ultima = payload_ts
+                if ultima > cutoff:
                     continue
 
                 print(f"[AUTO-CLOSE] Inativo: '{thread.name}' ({thread.id})")
@@ -179,8 +170,6 @@ async def auto_fechar_inativos():
                     processed = await _auto_pendenciar_sistemas(thread, guild)
                 elif name.startswith("2 -"):
                     processed = await _auto_pendenciar_ti(thread, guild)
-                elif name.startswith("3 -"):
-                    processed = await _auto_pendenciar_contato(thread, guild)
 
                 if processed:
                     handled.add(thread.id)
@@ -697,7 +686,7 @@ async def on_ready():
         print(
             "✅ Monitor de pendentes iniciado "
             f"(Sistemas/Equipamentos: {PENDING_INACTIVITY_HOURS}h; "
-            f"Recuperação de Contato: {CONTACT_PENDING_INACTIVITY_HOURS}h)."
+            "Recuperacao de Contato: sem pendentes; fechamento apos !contato)."
         )
 
     for guild_id, srv_cfg in config.SERVIDORES.items():
