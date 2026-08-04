@@ -755,7 +755,7 @@ async def help_cmd(ctx: commands.Context):
         value=(
             "Usado dentro de um tópico de **Recuperar Contato**.\n"
             "Indica que a busca foi concluída — envia a mensagem de conclusão para o colaborador, "
-            "remove o responsável pela busca do tópico e agenda o fechamento automático após 12 horas."
+            "remove o responsável pela busca do tópico e agenda o fechamento automático após 8 horas."
         ),
         inline=False,
     )
