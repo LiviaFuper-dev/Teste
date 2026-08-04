@@ -4,7 +4,7 @@ main.py — Entry point do Caveira Unificado.
 Auto-fechamento por inatividade:
   - Tópicos "1 - *" (sistemas) → movidos para #chamados-pendentes após 8h sem interação
   - Tópicos "2 - *" (equipamentos/TI) → movidos para #chamados-pendentes após 8h sem interação
-  - Tópicos "3 - *" (recuperar contato) → movidos para #chamados-pendentes após 8h sem interação
+  - Tópicos "3 - *" (recuperar contato) → fechados após !contato e não vão para #chamados-pendentes
   - Thread IDs já processados são salvos em data/thread_auto_actions.json
     para não serem processados novamente após reinício do bot.
 """
@@ -22,6 +22,7 @@ import config
 from modules import contato as contato_module
 from modules import sistemas as sistemas_module
 from modules import ti as ti_module
+from utils.command_help import reply_commands_help
 from utils.pending_chamados import PendingChamadoView, chamado_pendente_existe, criar_card_pendente
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -723,44 +724,16 @@ async def on_ready():
 
 @bot.command(name="help")
 async def help_cmd(ctx: commands.Context):
-    embed = discord.Embed(
-        title="📖 Comandos disponíveis",
-        description=(
-            "Estes comandos são usados **dentro dos tópicos** abertos pelos colaboradores. "
-            "Use-os para encerrar o atendimento corretamente."
-        ),
-        color=discord.Color.blurple(),
-    )
-    embed.add_field(
-        name="🖥️ `!logs`",
-        value=(
-            "Usado dentro de um tópico de **Equipamentos/T.I.**\n"
-            "Remove o colaborador do tópico, abre um formulário para você preencher "
-            "(empresa e nível real), gera um arquivo de log com todo o histórico "
-            "e envia os dados para o sistema. O tópico é apagado automaticamente ao final."
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="⚙️ `!sistema`",
-        value=(
-            "Usado dentro de um tópico de **Sistemas** (ChatGuru, Whom, ClickUp, E-mail, Falepaco, 3c+, Robôs).\n"
-            "Remove o colaborador do tópico, pede que você selecione o setor do colaborador "
-            "e envia todas as informações do atendimento para o sistema. O tópico é apagado automaticamente ao final."
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="📞 `!contato`",
-        value=(
-            "Usado dentro de um tópico de **Recuperar Contato**.\n"
-            "Indica que a busca foi concluída — envia a mensagem de conclusão para o colaborador, "
-            "remove o responsável pela busca do tópico e agenda o fechamento automático após 8 horas."
-        ),
-        inline=False,
-    )
-    embed.set_footer(text="Todos os comandos só funcionam dentro dos tópicos correspondentes.")
-    await ctx.reply(embed=embed, mention_author=False)
+    await reply_commands_help(ctx)
+
+
+@bot.event
+async def on_command_error(ctx: commands.Context, error: commands.CommandError):
+    if isinstance(error, commands.CommandNotFound):
+        await reply_commands_help(ctx, "Não reconheci esse comando.")
+        return
+
+    raise error
 
 
 @bot.event

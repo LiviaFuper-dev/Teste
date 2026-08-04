@@ -11,6 +11,7 @@ import discord
 from discord.ext import commands
 
 import config
+from utils.command_help import reply_commands_help
 from utils.logs import coletar_historico, enviar_log_conversa
 from ._engine import (
     PENDING_PAYLOADS,
@@ -169,15 +170,16 @@ def setup(bot: commands.Bot) -> None:
         channel = ctx.channel
 
         if not guild or not isinstance(channel, discord.Thread):
-            await ctx.reply(
-                "Este comando só pode ser usado dentro de um tópico.", mention_author=False
+            await reply_commands_help(
+                ctx,
+                "O comando `!sistema` só pode ser usado dentro de um tópico de Sistemas.",
             )
             return
 
         if not channel.name.startswith("1 -"):
-            await ctx.reply(
+            await reply_commands_help(
+                ctx,
                 "Este comando só funciona em tópicos de sistemas (prefixo '1 -').",
-                mention_author=False,
             )
             return
 

@@ -17,6 +17,7 @@ from discord.ext import commands
 
 import config
 from utils import n8n as n8n_utils
+from utils.command_help import reply_commands_help
 from utils.thread_utils import safe_join_thread, remove_members_except
 
 
@@ -583,8 +584,9 @@ def setup(bot: commands.Bot) -> None:
             return
 
         if not isinstance(channel, discord.Thread):
-            await ctx.reply(
-                "❌ `!logs` só pode ser usado dentro de um tópico.", mention_author=False
+            await reply_commands_help(
+                ctx,
+                "O comando `!logs` só pode ser usado dentro de um tópico de Equipamentos/T.I.",
             )
             return
 
