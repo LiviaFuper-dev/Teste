@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -111,6 +112,37 @@ def _format_created_at(value: str | None) -> str:
         return created_at.astimezone(_BR_TIMEZONE).strftime("%d/%m/%Y %H:%M")
     except Exception:
         return value
+
+
+def _thread_created_at_iso(thread: discord.Thread) -> str:
+    created_at = thread.created_at or datetime.datetime.now(datetime.timezone.utc)
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=datetime.timezone.utc)
+    return created_at.astimezone(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _first_history_timestamp(record: dict[str, Any]) -> str | None:
+    for line in record.get("conversation_history") or []:
+        match = re.match(r"^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]", str(line))
+        if match:
+            try:
+                dt = datetime.datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
+                dt = dt.replace(tzinfo=_BR_TIMEZONE).astimezone(datetime.timezone.utc)
+                return dt.isoformat().replace("+00:00", "Z")
+            except Exception:
+                return None
+    return None
+
+
+def _original_opened_at(record: dict[str, Any]) -> str | None:
+    # Cards antigos salvavam "created_at" como a data em que o chamado caiu em pendentes.
+    # Para nao mostrar essa data como abertura do chamado, preferimos o campo novo ou
+    # a primeira mensagem util salva no historico.
+    return (
+        record.get("original_opened_at")
+        or _first_history_timestamp(record)
+        or record.get("created_at")
+    )
 
 
 def _log_line(label: str, value: Any, *, limit: int = 700) -> str:
@@ -322,7 +354,7 @@ def _historico_anterior_text(record: dict[str, Any]) -> str:
 
 
 def _opened_at_text(record: dict[str, Any]) -> str:
-    return f"**Chamado original aberto em:** {_format_created_at(record.get('created_at'))}"
+    return f"**Chamado original aberto em:** {_format_created_at(_original_opened_at(record))}"
 
 
 def _build_embed(record: dict[str, Any]) -> discord.Embed:
@@ -614,7 +646,7 @@ class PendingChamadoView(discord.ui.View):
                 f"- Sistema: {record.get('sistema', '-')}\n"
                 f"- Motivo: {record.get('motivo') or 'Sem resumo registrado.'}\n"
                 f"- Histórico anterior: {record.get('log_url') or '#logs'}\n"
-                f"- Chamado original aberto em: {_format_created_at(record.get('created_at'))}\n"
+                f"- Chamado original aberto em: {_format_created_at(_original_opened_at(record))}\n"
                 f"{resume_history}\n"
                 f"{resume_attachments}\n"
                 "O atendimento continua por aqui e sera concluido somente com o comando adequado."
@@ -720,6 +752,7 @@ async def criar_card_pendente(
         "thread_name": thread.name,
         "thread_url": getattr(thread, "jump_url", None),
         "inativo_ha": "8h",
+        "original_opened_at": _thread_created_at_iso(thread),
         "created_at": datetime.datetime.utcnow().isoformat() + "Z",
         "payload": payload,
         "responsavel_role_id": responsavel_role_id,

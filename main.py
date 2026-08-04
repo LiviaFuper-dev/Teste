@@ -41,7 +41,8 @@ CONTACT_PENDING_INACTIVITY_HOURS = 24
 # Chamados criados antes desta data sao historico antigo e nunca sao movidos
 # automaticamente para #chamados-pendentes. Chamados criados a partir daqui
 # seguem a regra normal: Sistemas/Equipamentos em 8h e Recuperacao de Contato em 24h.
-PENDING_IGNORE_BEFORE = datetime(2026, 7, 23, 15, 0, tzinfo=timezone.utc)
+# 04/08/2026 11:00 no horario de Brasilia = 04/08/2026 14:00 UTC.
+PENDING_IGNORE_BEFORE = datetime(2026, 8, 4, 14, 0, tzinfo=timezone.utc)
 _HANDLED_FILE = Path("data/thread_auto_actions.json")
 _HANDLED_FILE.parent.mkdir(parents=True, exist_ok=True)
 
