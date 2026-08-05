@@ -4,7 +4,7 @@ main.py — Entry point do Caveira Unificado.
 Auto-fechamento por inatividade:
   - Tópicos "1 - *" (sistemas) → movidos para #chamados-pendentes após 8h sem interação
   - Tópicos "2 - *" (equipamentos/TI) → movidos para #chamados-pendentes após 8h sem interação
-  - Tópicos "3 - *" (recuperar contato) → movidos para #chamados-pendentes após 8h sem interação
+  - Tópicos "3 - *" (recuperar contato) → fechados após !contato e não vão para #chamados-pendentes
   - Thread IDs já processados são salvos em data/thread_auto_actions.json
     para não serem processados novamente após reinício do bot.
 """
@@ -22,6 +22,7 @@ import config
 from modules import contato as contato_module
 from modules import sistemas as sistemas_module
 from modules import ti as ti_module
+from utils.command_help import reply_commands_help
 from utils.pending_chamados import PendingChamadoView, chamado_pendente_existe, criar_card_pendente
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -36,13 +37,13 @@ intents.guilds = True
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 PENDING_INACTIVITY_HOURS = 8
-CONTACT_PENDING_INACTIVITY_HOURS = 24
 # Data de corte do monitor de pendentes.
 # Chamados criados antes desta data sao historico antigo e nunca sao movidos
 # automaticamente para #chamados-pendentes. Chamados criados a partir daqui
-# seguem a regra normal: Sistemas/Equipamentos em 8h e Recuperacao de Contato em 24h.
-# 04/08/2026 11:00 no horario de Brasilia = 04/08/2026 14:00 UTC.
-PENDING_IGNORE_BEFORE = datetime(2026, 8, 4, 14, 0, tzinfo=timezone.utc)
+# seguem a regra normal: Sistemas/Equipamentos em 8h.
+# Recuperacao de Contato nao vai para pendentes; o fechamento ocorre somente apos !contato.
+# 05/08/2026 10:44 no horario de Brasilia = 05/08/2026 13:44 UTC.
+PENDING_IGNORE_BEFORE = datetime(2026, 8, 5, 13, 44, tzinfo=timezone.utc)
 _HANDLED_FILE = Path("data/thread_auto_actions.json")
 _HANDLED_FILE.parent.mkdir(parents=True, exist_ok=True)
 
@@ -119,7 +120,6 @@ async def auto_fechar_inativos():
     """
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(hours=PENDING_INACTIVITY_HOURS)
-    contato_cutoff = now - timedelta(hours=CONTACT_PENDING_INACTIVITY_HOURS)
     handled = _load_handled()
     changed = False
 
@@ -143,7 +143,9 @@ async def auto_fechar_inativos():
                     continue
 
                 name = thread.name.strip()
-                if not (name.startswith("1 -") or name.startswith("2 -") or name.startswith("3 -")):
+                if name.startswith("3 -"):
+                    continue
+                if not (name.startswith("1 -") or name.startswith("2 -")):
                     continue
 
                 created_at = thread.created_at or datetime.now(timezone.utc)
@@ -154,22 +156,12 @@ async def auto_fechar_inativos():
                 if thread.archived or getattr(thread, "locked", False):
                     continue
 
-                if name.startswith("3 -"):
-                    from modules.contato import get_thread_activity, is_thread_finalizada
-                    if is_thread_finalizada(thread.id):
-                        continue
-                    ultima = await _ultima_atividade_humana(thread)
-                    activity_ts = get_thread_activity(thread.id)
-                    if activity_ts and activity_ts > ultima:
-                        ultima = activity_ts
-                else:
-                    ultima = await _ultima_atividade_humana(thread)
-                    if name.startswith("1 -"):
-                        payload_ts = _payload_last_interaction(thread.id)
-                        if payload_ts and payload_ts > ultima:
-                            ultima = payload_ts
-                limite_inatividade = contato_cutoff if name.startswith("3 -") else cutoff
-                if ultima > limite_inatividade:
+                ultima = await _ultima_atividade_humana(thread)
+                if name.startswith("1 -"):
+                    payload_ts = _payload_last_interaction(thread.id)
+                    if payload_ts and payload_ts > ultima:
+                        ultima = payload_ts
+                if ultima > cutoff:
                     continue
 
                 print(f"[AUTO-CLOSE] Inativo: '{thread.name}' ({thread.id})")
@@ -179,8 +171,6 @@ async def auto_fechar_inativos():
                     processed = await _auto_pendenciar_sistemas(thread, guild)
                 elif name.startswith("2 -"):
                     processed = await _auto_pendenciar_ti(thread, guild)
-                elif name.startswith("3 -"):
-                    processed = await _auto_pendenciar_contato(thread, guild)
 
                 if processed:
                     handled.add(thread.id)
@@ -697,7 +687,7 @@ async def on_ready():
         print(
             "✅ Monitor de pendentes iniciado "
             f"(Sistemas/Equipamentos: {PENDING_INACTIVITY_HOURS}h; "
-            f"Recuperação de Contato: {CONTACT_PENDING_INACTIVITY_HOURS}h)."
+            "Recuperacao de Contato: sem pendentes; fechamento apos !contato)."
         )
 
     for guild_id, srv_cfg in config.SERVIDORES.items():
@@ -734,44 +724,16 @@ async def on_ready():
 
 @bot.command(name="help")
 async def help_cmd(ctx: commands.Context):
-    embed = discord.Embed(
-        title="📖 Comandos disponíveis",
-        description=(
-            "Estes comandos são usados **dentro dos tópicos** abertos pelos colaboradores. "
-            "Use-os para encerrar o atendimento corretamente."
-        ),
-        color=discord.Color.blurple(),
-    )
-    embed.add_field(
-        name="🖥️ `!logs`",
-        value=(
-            "Usado dentro de um tópico de **Equipamentos/T.I.**\n"
-            "Remove o colaborador do tópico, abre um formulário para você preencher "
-            "(empresa e nível real), gera um arquivo de log com todo o histórico "
-            "e envia os dados para o sistema. O tópico é apagado automaticamente ao final."
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="⚙️ `!sistema`",
-        value=(
-            "Usado dentro de um tópico de **Sistemas** (ChatGuru, Whom, ClickUp, E-mail, Falepaco, 3c+, Robôs).\n"
-            "Remove o colaborador do tópico, pede que você selecione o setor do colaborador "
-            "e envia todas as informações do atendimento para o sistema. O tópico é apagado automaticamente ao final."
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="📞 `!contato`",
-        value=(
-            "Usado dentro de um tópico de **Recuperar Contato**.\n"
-            "Indica que a busca foi concluída — envia a mensagem de conclusão para o colaborador, "
-            "remove o responsável pela busca do tópico e agenda o fechamento automático após 12 horas."
-        ),
-        inline=False,
-    )
-    embed.set_footer(text="Todos os comandos só funcionam dentro dos tópicos correspondentes.")
-    await ctx.reply(embed=embed, mention_author=False)
+    await reply_commands_help(ctx)
+
+
+@bot.event
+async def on_command_error(ctx: commands.Context, error: commands.CommandError):
+    if isinstance(error, commands.CommandNotFound):
+        await reply_commands_help(ctx, "Não reconheci esse comando.")
+        return
+
+    raise error
 
 
 @bot.event

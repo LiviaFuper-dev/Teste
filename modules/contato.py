@@ -22,6 +22,7 @@ import discord
 from discord.ext import commands, tasks
 
 import config
+from utils.command_help import reply_commands_help
 from utils.thread_utils import safe_join_thread
 
 # ── Regex de validação de CPF ──────────────────────────────────────────────────
@@ -388,21 +389,17 @@ def setup(bot: commands.Bot) -> None:
             discord.ChannelType.public_thread,
             discord.ChannelType.news_thread,
         ):
-            try:
-                await ctx.author.send(
-                    "O comando `!contato` só pode ser usado dentro de um tópico."
-                )
-            except Exception:
-                pass
+            await reply_commands_help(
+                ctx,
+                "O comando `!contato` só pode ser usado dentro de um tópico de Recuperar Contato.",
+            )
             return
 
         if not ctx.channel.name.startswith("3 -"):
-            try:
-                await ctx.author.send(
-                    "O comando `!contato` só pode ser usado em tópicos de contato."
-                )
-            except Exception:
-                pass
+            await reply_commands_help(
+                ctx,
+                "O comando `!contato` só pode ser usado em tópicos de Recuperar Contato.",
+            )
             return
 
         # Remove do controle de inatividade

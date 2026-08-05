@@ -46,7 +46,7 @@ ADMIN_EXTRA_ROLE_ID: int     = 1424847269148102656   # Cargo adicional
 # ── Módulo Contato ─────────────────────────────────────────────────────────────
 CONTATO_TARGET_ROLE_ID: int             = 1516088193240400054  # cargo mencionado em todo tópico
 CONTATO_INACTIVITY_TIMEOUT_SECONDS: int = 86400                # 24h (use 5 para teste)
-CONTATO_CLOSE_DELAY_SECONDS: int        = 86400                # 24h após !contato
+CONTATO_CLOSE_DELAY_SECONDS: int        = 28800                # 8h apos !contato
 
 # Modulo TI / Equipamentos
 EQUIPAMENTOS_ROLE_ID: int = 1519781852611875098  # cargo mencionado nos chamados de equipamentos
