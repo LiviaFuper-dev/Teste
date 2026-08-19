@@ -652,6 +652,13 @@ class PendingChamadoView(discord.ui.View):
                 "O atendimento continua por aqui e sera concluido somente com o comando adequado."
             )
 
+        responsavel_role_id = record.get("responsavel_role_id")
+        if responsavel_role_id:
+            await thread.send(
+                f"<@&{responsavel_role_id}>",
+                allowed_mentions=discord.AllowedMentions(roles=True),
+            )
+
         pending.pop(str(interaction.message.id), None)
         _save_pending(pending)
 

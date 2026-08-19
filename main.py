@@ -251,11 +251,13 @@ def _responsavel_sistemas_role_id(guild: discord.Guild, sistema: str) -> int | N
         "ChatGuru": "chatguru_role_id",
         "Whom": "whom_role_id",
         "Clickup": "clickup_support_role_id",
+        "3c+": "tresceplus_role_id",
     }
     default_by_system = {
         "ChatGuru": config.CHATGURU_ROLE_ID,
         "Whom": config.WHOM_ROLE_ID,
         "Clickup": config.CLICKUP_SUPPORT_ROLE_ID,
+        "3c+": config.TRESCEPLUS_ROLE_ID,
     }
 
     role_id = cfg.get(key_by_system.get(sistema, "")) or default_by_system.get(sistema)
