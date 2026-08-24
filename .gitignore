@@ -12,6 +12,8 @@ __pycache__/
 .vscode/
 caveira-SDR.py
 
+deploy.sh
+
 enviarvideo.py
 tutorial.mp4
 
