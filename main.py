@@ -12,6 +12,7 @@ Auto-fechamento por inatividade:
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -42,8 +43,29 @@ PENDING_INACTIVITY_HOURS = 8
 # automaticamente para #chamados-pendentes. Chamados criados a partir daqui
 # seguem a regra normal: Sistemas/Equipamentos em 8h.
 # Recuperacao de Contato nao vai para pendentes; o fechamento ocorre somente apos !contato.
-# 05/08/2026 10:44 no horario de Brasilia = 05/08/2026 13:44 UTC.
-PENDING_IGNORE_BEFORE = datetime(2026, 8, 5, 13, 44, tzinfo=timezone.utc)
+# Pode ser definido no .env, por exemplo:
+# PENDING_IGNORE_BEFORE=2026-08-24T15:00:00-03:00
+_PENDING_IGNORE_BEFORE_DEFAULT = datetime(2026, 8, 5, 13, 44, tzinfo=timezone.utc)
+
+
+def _load_pending_ignore_before() -> datetime:
+    raw = os.getenv("PENDING_IGNORE_BEFORE", "").strip()
+    if not raw:
+        return _PENDING_IGNORE_BEFORE_DEFAULT
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except ValueError:
+        print(
+            "[WARN] PENDING_IGNORE_BEFORE invalido no .env; "
+            "usando o corte padrao de 05/08/2026 10:44 (Brasilia)."
+        )
+        return _PENDING_IGNORE_BEFORE_DEFAULT
+
+
+PENDING_IGNORE_BEFORE = _load_pending_ignore_before()
 _HANDLED_FILE = Path("data/thread_auto_actions.json")
 _HANDLED_FILE.parent.mkdir(parents=True, exist_ok=True)
 
