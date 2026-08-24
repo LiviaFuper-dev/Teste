@@ -75,11 +75,6 @@ echo "=== [2/6] Preparando rollback e fazendo build ==="
         echo 'Arquivo .env nao encontrado na VPS.' >&2
         exit 1
     fi
-    if ! grep -Eq '^[[:space:]]*PENDING_IGNORE_BEFORE=' '${REMOTE_APP_PATH}/.env'; then
-        pending_cutoff=\$(date -u +%Y-%m-%dT%H:%M:%SZ)
-        printf '\nPENDING_IGNORE_BEFORE=%s\n' \"\${pending_cutoff}\" >> '${REMOTE_APP_PATH}/.env'
-        echo \"Data de corte criada: \${pending_cutoff}\"
-    fi
     if docker image inspect '${CURRENT_IMAGE}' >/dev/null 2>&1; then
         docker tag '${CURRENT_IMAGE}' '${ROLLBACK_IMAGE}'
     fi
