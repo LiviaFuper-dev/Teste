@@ -1,129 +1,126 @@
-#!/usr/bin/env bash
+#!/bin/bash
 set -Eeuo pipefail
 
-: "${VPS_PASS:?Defina VPS_PASS antes de executar o deploy.}"
+# deploy.sh — Deploy do Caveira Unificado para a VPS via rsync + Docker
+#
+# Uso (dentro do WSL):
+#   bash deploy.sh
+#
+# O .env, o solutions.json e a pasta data ficam na VPS e nao sao apagados.
+
 : "${VPS_USER:?Defina VPS_USER antes de executar o deploy.}"
 : "${VPS_HOST:?Defina VPS_HOST antes de executar o deploy.}"
+: "${VPS_PASS:?Defina VPS_PASS antes de executar o deploy.}"
 : "${VPS_PATH:?Defina VPS_PATH antes de executar o deploy.}"
 
-IMAGE_REPOSITORY="caveira-unificado"
-CURRENT_IMAGE="${IMAGE_REPOSITORY}:latest"
-CANDIDATE_IMAGE="${IMAGE_REPOSITORY}:candidate"
-ROLLBACK_IMAGE="${IMAGE_REPOSITORY}:rollback"
-CONTAINER_NAME="caveira-unificado"
+IMAGE_NAME="${IMAGE_NAME:-caveira-unificado:latest}"
+CONTAINER_NAME="${CONTAINER_NAME:-caveira-unificado}"
+ROLLBACK_IMAGE="${IMAGE_NAME%:*}:rollback"
 PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REMOTE_APP_PATH="${VPS_PATH%/}"
-# Fica fora da pasta sincronizada; portanto, o rsync --delete nunca a alcanca.
-REMOTE_DATA_PATH="${REMOTE_APP_PATH}-data"
-REMOTE_DATA_BACKUP="${REMOTE_APP_PATH}-data-backup.tar.gz"
+DATA_PATH="${VPS_PATH%/}/data"
+DATA_BACKUP="${VPS_PATH%/}/data-backup.tar.gz"
 
 export SSHPASS="${VPS_PASS}"
-SSH_CMD=(
-    sshpass -e ssh
-    -o StrictHostKeyChecking=no
-    "${VPS_USER}@${VPS_HOST}"
-)
-RSYNC_SHELL="sshpass -e ssh -o StrictHostKeyChecking=no"
+SSH_CMD="sshpass -e ssh -o StrictHostKeyChecking=no ${VPS_USER}@${VPS_HOST}"
+RSYNC_CMD="sshpass -e rsync -avz"
 
-remote_run_container() {
-    local image="$1"
-    "${SSH_CMD[@]}" "docker run -d \
-        --name '${CONTAINER_NAME}' \
-        --restart unless-stopped \
-        --env-file '${REMOTE_APP_PATH}/.env' \
-        -v '${REMOTE_APP_PATH}/solutions.json:/app/solutions.json:ro' \
-        -v '${REMOTE_DATA_PATH}:/app/data' \
-        '${image}'"
-}
-
-rollback() {
-    echo "Falha ao iniciar a nova versao. Tentando restaurar a imagem anterior..."
-    "${SSH_CMD[@]}" "
+rollback_deploy() {
+    echo "Falha na nova versao. Restaurando o container anterior..."
+    ${SSH_CMD} "
+        set -e
         docker rm -f '${CONTAINER_NAME}' >/dev/null 2>&1 || true
-        if [ -f '${REMOTE_DATA_BACKUP}' ]; then
-            failed_data_path='${REMOTE_DATA_PATH}-failed-'\$(date +%Y%m%d%H%M%S)
-            mv '${REMOTE_DATA_PATH}' \"\${failed_data_path}\"
-            mkdir -p '${REMOTE_DATA_PATH}'
-            tar -xzf '${REMOTE_DATA_BACKUP}' -C '${REMOTE_DATA_PATH}'
+        if [ -f '${DATA_BACKUP}' ]; then
+            failed_data_path='${DATA_PATH}-failed-'\$(date +%Y%m%d%H%M%S)
+            mv '${DATA_PATH}' \"\${failed_data_path}\"
+            mkdir -p '${DATA_PATH}'
+            tar -xzf '${DATA_BACKUP}' -C '${DATA_PATH}'
         fi
+        docker image inspect '${ROLLBACK_IMAGE}' >/dev/null
+        docker run -d \
+            --name '${CONTAINER_NAME}' \
+            --restart unless-stopped \
+            --env-file '${VPS_PATH%/}/.env' \
+            -v '${VPS_PATH%/}/solutions.json:/app/solutions.json:ro' \
+            -v '${DATA_PATH}:/app/data' \
+            '${ROLLBACK_IMAGE}'
     "
-    if "${SSH_CMD[@]}" "docker image inspect '${ROLLBACK_IMAGE}' >/dev/null 2>&1"; then
-        remote_run_container "${ROLLBACK_IMAGE}"
-        echo "Rollback concluido. A versao anterior voltou a funcionar."
-    else
-        echo "Nao existe imagem de rollback disponivel." >&2
-    fi
+    echo "Rollback concluido. A versao anterior voltou a funcionar."
 }
 
-echo "=== [1/6] Enviando arquivos para a VPS ==="
-rsync -avz \
+echo "=== [1/4] Enviando arquivos para a VPS ==="
+${RSYNC_CMD} \
     --delete \
     --exclude '.env' \
+    --exclude 'solutions.json' \
     --exclude 'data/' \
+    --exclude 'data-backup.tar.gz' \
     --exclude '__pycache__/' \
     --exclude '*.pyc' \
     --exclude '.git/' \
     --exclude 'deploy.sh' \
-    -e "${RSYNC_SHELL}" \
+    -e "sshpass -e ssh -o StrictHostKeyChecking=no" \
     "${PROJECT_DIR}/" \
-    "${VPS_USER}@${VPS_HOST}:${REMOTE_APP_PATH}/"
+    "${VPS_USER}@${VPS_HOST}:${VPS_PATH%/}/"
 
-echo "=== [2/6] Preparando rollback e fazendo build ==="
-"${SSH_CMD[@]}" "
+echo "=== [2/4] Fazendo build da imagem na VPS ==="
+${SSH_CMD} "
     set -e
-    if [ ! -f '${REMOTE_APP_PATH}/.env' ]; then
+    if [ ! -f '${VPS_PATH%/}/.env' ]; then
         echo 'Arquivo .env nao encontrado na VPS.' >&2
         exit 1
     fi
-    if docker image inspect '${CURRENT_IMAGE}' >/dev/null 2>&1; then
-        docker tag '${CURRENT_IMAGE}' '${ROLLBACK_IMAGE}'
+    if [ ! -f '${VPS_PATH%/}/solutions.json' ]; then
+        echo 'Arquivo solutions.json nao encontrado na VPS.' >&2
+        exit 1
     fi
-    cd '${REMOTE_APP_PATH}'
-    docker build -t '${CANDIDATE_IMAGE}' .
+    if docker image inspect '${IMAGE_NAME}' >/dev/null 2>&1; then
+        docker tag '${IMAGE_NAME}' '${ROLLBACK_IMAGE}'
+    fi
+    cd '${VPS_PATH%/}'
+    docker build -t '${IMAGE_NAME}' .
 "
 
-echo "=== [3/6] Parando o container atual ==="
-"${SSH_CMD[@]}" "
+echo "=== [3/4] Parando container antigo e preservando os dados ==="
+if ! ${SSH_CMD} "
+    set -e
+    mkdir -p '${DATA_PATH}'
     if docker container inspect '${CONTAINER_NAME}' >/dev/null 2>&1; then
         docker stop '${CONTAINER_NAME}'
-    fi
-"
-
-echo "=== [4/6] Migrando e protegendo os dados ==="
-if ! "${SSH_CMD[@]}" "
-    set -e
-    mkdir -p '${REMOTE_DATA_PATH}'
-    if docker container inspect '${CONTAINER_NAME}' >/dev/null 2>&1; then
         current_mount=\$(docker inspect -f '{{range .Mounts}}{{if eq .Destination \"/app/data\"}}{{.Source}}{{end}}{{end}}' '${CONTAINER_NAME}')
-        if [ \"\${current_mount}\" != '${REMOTE_DATA_PATH}' ] && [ ! -f '${REMOTE_DATA_PATH}/.migration-complete' ]; then
-            docker cp '${CONTAINER_NAME}:/app/data/.' '${REMOTE_DATA_PATH}/'
+        if [ \"\${current_mount}\" != '${DATA_PATH}' ] && [ ! -f '${DATA_PATH}/.migration-complete' ]; then
+            docker cp '${CONTAINER_NAME}:/app/data/.' '${DATA_PATH}/'
         fi
     fi
-    touch '${REMOTE_DATA_PATH}/.migration-complete'
-    tar -czf '${REMOTE_DATA_BACKUP}' -C '${REMOTE_DATA_PATH}' .
+    touch '${DATA_PATH}/.migration-complete'
+    tar -czf '${DATA_BACKUP}' -C '${DATA_PATH}' .
+    if docker container inspect '${CONTAINER_NAME}' >/dev/null 2>&1; then
+        docker rm '${CONTAINER_NAME}'
+    fi
 "; then
-    echo "A copia dos dados falhou. O container anterior sera reiniciado." >&2
-    "${SSH_CMD[@]}" "docker start '${CONTAINER_NAME}' >/dev/null 2>&1 || true"
+    echo "A preservacao dos dados falhou. O container anterior sera reiniciado." >&2
+    ${SSH_CMD} "docker start '${CONTAINER_NAME}' >/dev/null 2>&1 || true"
     exit 1
 fi
 
-echo "=== [5/6] Subindo a nova versao ==="
-"${SSH_CMD[@]}" "docker rm '${CONTAINER_NAME}' >/dev/null 2>&1 || true"
-if ! remote_run_container "${CANDIDATE_IMAGE}"; then
-    rollback
+echo "=== [4/4] Subindo novo container ==="
+if ! ${SSH_CMD} "docker run -d \
+    --name '${CONTAINER_NAME}' \
+    --restart unless-stopped \
+    --env-file '${VPS_PATH%/}/.env' \
+    -v '${VPS_PATH%/}/solutions.json:/app/solutions.json:ro' \
+    -v '${DATA_PATH}:/app/data' \
+    '${IMAGE_NAME}'"; then
+    rollback_deploy
     exit 1
 fi
 
-echo "=== [6/6] Validando o container ==="
 sleep 8
-container_status="$(
-    "${SSH_CMD[@]}" "docker inspect -f '{{.State.Status}}' '${CONTAINER_NAME}' 2>/dev/null || true"
-)"
-if [ "${container_status}" != "running" ]; then
-    "${SSH_CMD[@]}" "docker logs --tail 100 '${CONTAINER_NAME}' 2>&1 || true"
-    rollback
+CONTAINER_STATUS="$(${SSH_CMD} "docker inspect -f '{{.State.Status}}' '${CONTAINER_NAME}' 2>/dev/null || true")"
+if [ "${CONTAINER_STATUS}" != "running" ]; then
+    ${SSH_CMD} "docker logs --tail 100 '${CONTAINER_NAME}' 2>&1 || true"
+    rollback_deploy
     exit 1
 fi
 
-"${SSH_CMD[@]}" "docker tag '${CANDIDATE_IMAGE}' '${CURRENT_IMAGE}'"
-echo "Deploy concluido. Container em execucao e dados persistentes preservados."
+echo ""
+echo "Deploy concluido! Bot no ar e dados preservados."
