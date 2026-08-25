@@ -1,5 +1,5 @@
 """
-_chatguru.py - Passo final do fluxo ChatGuru.
+_chatguru.py — Passo final do fluxo ChatGuru.
 
 Contém:
   - ChatGuruFourthView  (existe mensagem de erro?)
@@ -12,20 +12,21 @@ import re
 
 import discord
 
-from ._engine import _update_step, _disable_view, _ping_role, role_id_for_system
+import config
+from ._engine import _update_step, _disable_view, _ping_role, PENDING_PAYLOADS
 
-# solutions.json
-# __file__ -> modules/sistemas/_chatguru.py
-# dirname x1 -> modules/sistemas/
-# dirname x2 -> modules/
-# dirname x3 -> raiz do projeto (onde está solutions.json)
+# ── solutions.json ────────────────────────────────────────────────────────────
+# __file__ → modules/sistemas/_chatguru.py
+# dirname x1 → modules/sistemas/
+# dirname x2 → modules/
+# dirname x3 → raiz do projeto (onde está solutions.json)
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _SOLUTIONS_FILE = os.path.join(_BASE_DIR, "solutions.json")
 
 try:
     with open(_SOLUTIONS_FILE, "r", encoding="utf-8") as _f:
         ERROR_DB: dict[str, str] = {str(k): v for k, v in json.load(_f).items()}
-    print(f"[SISTEMAS] solutions.json carregado - {len(ERROR_DB)} entradas.")
+    print(f"[SISTEMAS] solutions.json carregado — {len(ERROR_DB)} entradas.")
 except FileNotFoundError:
     ERROR_DB = {}
     print("[SISTEMAS] solutions.json não encontrado. ERROR_DB vazio.")
@@ -33,6 +34,8 @@ except Exception as _e:
     ERROR_DB = {}
     print(f"[SISTEMAS] Erro ao carregar solutions.json: {_e}")
 
+
+# ── ChatGuruFourthView ────────────────────────────────────────────────────────
 
 class ChatGuruFourthView(discord.ui.View):
     """Pergunta se existe mensagem de erro visível na tela."""
@@ -49,7 +52,7 @@ class ChatGuruFourthView(discord.ui.View):
             return False
         return True
 
-    @discord.ui.button(label="Não existe", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="não existe", style=discord.ButtonStyle.danger)
     async def no_exist(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self._check_user(interaction):
             return
@@ -57,10 +60,8 @@ class ChatGuruFourthView(discord.ui.View):
         await _disable_view(interaction, self)
         await interaction.response.defer()
         await _ping_role(
-            interaction.channel,
-            interaction.guild,
-            role_id_for_system(interaction.guild.id, "ChatGuru"),
-            "O usuário informou que não há nenhuma mensagem de erro visível. Chamando a equipe do ChatGuru:",
+            interaction.channel, interaction.guild, config.CHATGURU_ROLE_ID,
+            "❗ O usuário informou que não há mensagem de erro visível. Chamando equipe ChatGuru:",
         )
 
     @discord.ui.button(label="existe", style=discord.ButtonStyle.primary)
@@ -71,6 +72,8 @@ class ChatGuruFourthView(discord.ui.View):
         await _disable_view(interaction, self)
         await interaction.response.send_modal(ErrorNumberModal(self.original_user_id))
 
+
+# ── ErrorNumberModal ──────────────────────────────────────────────────────────
 
 class ErrorNumberModal(discord.ui.Modal, title="Número do erro"):
     """Coleta o código de erro e tenta resolver automaticamente via solutions.json."""
@@ -99,13 +102,13 @@ class ErrorNumberModal(discord.ui.Modal, title="Número do erro"):
         guild = interaction.guild
         user_input = self.error_number.value.strip()
 
-        m = re.match(r"^\s*(\d{1,6})", user_input) or re.search(r"(\d{1,6})", user_input)
+        m = re.match(r'^\s*(\d{1,6})', user_input) or re.search(r'(\d{1,6})', user_input)
         code = m.group(1) if m else None
 
         _update_step(thread.id, "codigo_erro_informado", user_input)
 
         try:
-            await thread.send(f"Número/erro informado pelo usuário:\n{user_input}")
+            await thread.send(f"🔎 **Número/erro informado pelo usuário:**\n{user_input}")
         except Exception:
             pass
 
@@ -115,7 +118,7 @@ class ErrorNumberModal(discord.ui.Modal, title="Número do erro"):
             dm_enviado = False
             try:
                 await interaction.user.send(
-                    f"Solução encontrada para o código `{code}` "
+                    f"💡 **Solução encontrada para o código `{code}`** "
                     f"(chamado: **{getattr(thread, 'name', 'sem nome')}**):\n\n"
                     f"{solution}\n\n"
                     "Caso o problema persista, entre em contato com a equipe de suporte."
@@ -126,9 +129,9 @@ class ErrorNumberModal(discord.ui.Modal, title="Número do erro"):
             except Exception as e:
                 print(f"[SISTEMAS] Erro ao enviar DM: {e}")
 
-            aviso = "Solução encontrada e enviada no privado do usuário.\n"
+            aviso = "✅ Solução encontrada e enviada no privado do usuário.\n"
             if not dm_enviado:
-                aviso += "Não foi possível enviar DM (DMs fechadas).\n"
+                aviso += "⚠️ Não foi possível enviar DM (DMs fechadas).\n"
             try:
                 await thread.send(aviso)
             except Exception:
@@ -140,10 +143,8 @@ class ErrorNumberModal(discord.ui.Modal, title="Número do erro"):
                 pass
 
             await _ping_role(
-                thread,
-                guild,
-                role_id_for_system(interaction.guild.id, "ChatGuru"),
-                "Solução automática aplicada. Equipe ChatGuru, fiquem cientes do chamado:",
+                thread, guild, config.CHATGURU_ROLE_ID,
+                "📋 Solução automática aplicada. Equipe ChatGuru, fiquem cientes do chamado:",
             )
 
             _update_step(thread.id, "solution_found", "sim")
@@ -151,11 +152,10 @@ class ErrorNumberModal(discord.ui.Modal, title="Número do erro"):
             _update_step(thread.id, "dm_enviado", "sim" if dm_enviado else "nao")
             return
 
+        # Sem solução → pinga ChatGuru
         await _ping_role(
-            thread,
-            guild,
-            role_id_for_system(interaction.guild.id, "ChatGuru"),
-            "Não encontrei uma solução automática para esse código. Chamando equipe ChatGuru.",
+            thread, guild, config.CHATGURU_ROLE_ID,
+            "❗ Não encontrei uma solução automática para esse código. Chamando equipe ChatGuru.",
         )
         await interaction.followup.send(
             "Obrigado, a equipe de T.I foi notificada. (Nenhuma solução automática encontrada.)",

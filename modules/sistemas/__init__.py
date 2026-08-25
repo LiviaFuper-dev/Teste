@@ -18,7 +18,7 @@ import discord
 from discord.ext import commands
 
 import config
-from ._engine import SISTEMAS_CONFIG, PENDING_PAYLOADS, ProblemTypeView, _ping_role, set_payload, role_id_for_system
+from ._engine import SISTEMAS_CONFIG, PENDING_PAYLOADS, ProblemTypeView, _ping_role, set_payload
 from ._chatguru import ChatGuruFourthView
 from ._whom import WhomWarningView
 from ._email import _criar_thread_email
@@ -55,7 +55,7 @@ async def _escalada_final(
         )
     elif final == "escalate":
         await _ping_role(
-            thread, guild, role_id_for_system(guild.id, sistema),
+            thread, guild, cfg["role_id"],
             "❗ O usuário informou que tentou as tentativas sugeridas e não funcionou. Chamando equipe ClickUp:",
         )
 

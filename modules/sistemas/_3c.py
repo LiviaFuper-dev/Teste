@@ -14,7 +14,9 @@ import discord
 import config
 from ._engine import PENDING_PAYLOADS, _ping_role, set_payload
 
-_CARGO_3CPLUS_ID = config.TRESCEPLUS_ROLE_ID
+def _cargo_3cplus_id(guild_id: int) -> int:
+    cfg = config.SERVIDORES.get(guild_id, {}).get("sistemas", {})
+    return int(cfg.get("tresceplus_role_id") or config.TRESCEPLUS_ROLE_ID)
 
 
 async def _abrir_3cplus(interaction: discord.Interaction) -> None:
@@ -71,7 +73,7 @@ async def _abrir_3cplus(interaction: discord.Interaction) -> None:
     print(f"[3CPLUS] Payload inicializado: thread {thread.id}")
 
     await _ping_role(
-        thread, guild, _CARGO_3CPLUS_ID,
+        thread, guild, _cargo_3cplus_id(guild.id),
         f"Olá, {user.mention}! Tudo bem? 😊\n\n"
         "Recebemos seu chamado sobre o **3c+**.\n"
         "Por favor, descreva aqui o que está acontecendo e nossa equipe entrará em contato em breve.",

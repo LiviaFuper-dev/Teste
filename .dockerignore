@@ -1,9 +1,0 @@
-.git
-.gitignore
-.env
-.venv
-__pycache__
-*.pyc
-data
-deploy.sh
-solutions.json

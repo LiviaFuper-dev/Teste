@@ -3,7 +3,7 @@ utils/pending_chamados.py — Painel de chamados pendentes por inatividade.
 
 Fluxo:
   - Chamados de Sistemas, Equipamentos/TI e Recuperar Contato ficam ativos na thread original.
-  - Após 8h sem interação, o main.py gera log, cria um card em #chamados-pendentes
+  - Após 24h sem interação, o main.py gera log, cria um card em #chamados-pendentes
     e arquiva a thread original.
   - O card permite ver histórico, retomar o chamado em uma nova thread ou excluir o pendente.
   - Ao retomar, dados importantes do atendimento anterior são restaurados para o fluxo continuar.
@@ -26,7 +26,7 @@ from utils.thread_utils import safe_join_thread
 _PENDING_FILE = Path("data/chamados_pendentes.json")
 _PENDING_FILE.parent.mkdir(parents=True, exist_ok=True)
 _BR_TIMEZONE = datetime.timezone(datetime.timedelta(hours=-3))
-_PENDING_WARNING_TEXT = "Este chamado ficou 8 horas sem interação e foi movido para o painel de chamados pendentes."
+_PENDING_WARNING_TEXT = "Este chamado ficou 24 horas sem interação e foi movido para o painel de chamados pendentes."
 
 
 def _now_brasilia() -> datetime.datetime:
@@ -61,8 +61,8 @@ def _pending_channel_id(guild_id: int) -> int | None:
 
 
 def _attachments_archive_channel(guild: discord.Guild) -> discord.abc.Messageable | None:
-    # O canal de logs serve somente como base para criar topicos privados.
-    # Assim, o backup das imagens nao fica exposto diretamente no canal de logs.
+    # O canal de logs e usado apenas como base para criar topicos privados.
+    # A imagem vai para o topico privado arquivado, entao nao aparece aberta no #logs.
     channel_id = config.SERVIDORES.get(guild.id, {}).get("canal_logs")
     return guild.get_channel(channel_id) if channel_id else None
 
@@ -98,17 +98,6 @@ def _nivel_urgencia_equipamentos(record: dict[str, Any]) -> str | None:
     if len(parts) >= 2 and parts[0] == "2":
         return parts[1]
     return None
-
-
-def _display_sistema(record: dict[str, Any]) -> str:
-    sistema = str(record.get("sistema") or "-")
-    original_name = record.get("thread_name") or record.get("original_thread_name") or ""
-    parts = [part.strip() for part in original_name.split(" - ")]
-    if len(parts) >= 2 and parts[0] == "1":
-        return parts[1]
-    if sistema in {"Automações", "Automacoes"}:
-        return "Robôs/Planilhas"
-    return sistema
 
 
 def _format_created_at(value: str | None) -> str:
@@ -223,11 +212,7 @@ def _is_automatic_opening_message(message: discord.Message, text: str) -> bool:
     return False
 
 
-async def _capture_thread_history(
-    thread: discord.Thread,
-    *,
-    limit: int | None = None,
-) -> list[str]:
+async def _capture_thread_history(thread: discord.Thread, *, limit: int | None = None) -> list[str]:
     linhas: list[str] = []
     warning_seen = False
     try:
@@ -277,10 +262,7 @@ async def _archive_attachment(
         try:
             await storage_thread.edit(archived=True, locked=True)
         except Exception as e:
-            print(
-                f"[PENDENTES] Nao foi possivel arquivar topico de anexo "
-                f"{storage_thread.id}: {e}"
-            )
+            print(f"[PENDENTES] Nao foi possivel arquivar topico de anexo {storage_thread.id}: {e}")
         if sent.attachments:
             return sent.attachments[0].url
     except Exception as e:
@@ -383,7 +365,7 @@ def _resume_history_line(raw_line: str) -> str | None:
 
 
 def _highlight_saved_history_author(raw_line: str) -> str:
-    """Destaca o nome do autor sem remover a data do historico completo."""
+    """Destaca o nome do autor sem remover a data do histórico completo."""
     line = str(raw_line or "").strip()
     match = re.match(r"^(\[[^\]]+\]\s*)([^:\n]{1,100}):\s*(.*)$", line, flags=re.DOTALL)
     if not match:
@@ -395,7 +377,7 @@ def _highlight_saved_history_author(raw_line: str) -> str:
 
 
 def _resume_history_pages(record: dict[str, Any], *, max_chars: int = 500) -> list[str]:
-    """Monta todo o historico util da retomada em paginas seguras para embeds."""
+    """Monta todo o histórico útil da retomada em páginas seguras para embeds."""
     linhas = [
         clean
         for raw in (record.get("conversation_history") or [])
@@ -407,10 +389,7 @@ def _resume_history_pages(record: dict[str, Any], *, max_chars: int = 500) -> li
     pages: list[str] = []
     current = ""
     for linha in linhas:
-        parts = [
-            linha[index:index + max_chars]
-            for index in range(0, len(linha), max_chars)
-        ] or [""]
+        parts = [linha[index:index + max_chars] for index in range(0, len(linha), max_chars)] or [""]
         for part in parts:
             candidate = f"{current}\n{part}" if current else part
             if current and len(candidate) > max_chars:
@@ -425,16 +404,16 @@ def _resume_history_pages(record: dict[str, Any], *, max_chars: int = 500) -> li
 
 def _resume_history_embed(pages: list[str], index: int) -> discord.Embed:
     embed = discord.Embed(
-        title="Historico do chamado anterior",
+        title="Histórico do chamado anterior",
         description=pages[index],
         color=discord.Color.blurple(),
     )
-    embed.set_footer(text=f"Pagina {index + 1} de {len(pages)}")
+    embed.set_footer(text=f"Página {index + 1} de {len(pages)}")
     return embed
 
 
 class ReopenedHistoryView(discord.ui.View):
-    """Setas publicas para navegar pelo historico dentro da thread retomada."""
+    """Setas públicas para navegar pelo histórico dentro da thread retomada."""
 
     def __init__(self, pages: list[str]):
         super().__init__(timeout=3600)
@@ -447,11 +426,7 @@ class ReopenedHistoryView(discord.ui.View):
         self.next_page.disabled = self.index >= len(self.pages) - 1
 
     @discord.ui.button(label="◀ Anterior", style=discord.ButtonStyle.secondary)
-    async def previous_page(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ):
+    async def previous_page(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.index = max(0, self.index - 1)
         self._sync_buttons()
         await interaction.response.edit_message(
@@ -459,12 +434,8 @@ class ReopenedHistoryView(discord.ui.View):
             view=self,
         )
 
-    @discord.ui.button(label="Proxima ▶", style=discord.ButtonStyle.secondary)
-    async def next_page(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ):
+    @discord.ui.button(label="Próxima ▶", style=discord.ButtonStyle.secondary)
+    async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.index = min(len(self.pages) - 1, self.index + 1)
         self._sync_buttons()
         await interaction.response.edit_message(
@@ -488,14 +459,11 @@ def _resume_attachments_text(record: dict[str, Any], *, limit: int = 5) -> str:
 
 
 def _discord_message_chunks(text: str, *, limit: int = 1900) -> list[str]:
-    """Divide textos longos em blocos seguros para mensagens do Discord."""
+    """Divide texto por linhas e, se necessário, corta linhas maiores que o limite."""
     chunks: list[str] = []
     current = ""
     for line in text.strip().splitlines():
-        pieces = [
-            line[index:index + limit]
-            for index in range(0, len(line), limit)
-        ] or [""]
+        pieces = [line[index:index + limit] for index in range(0, len(line), limit)] or [""]
         for piece in pieces:
             candidate = f"{current}\n{piece}" if current else piece
             if current and len(candidate) > limit:
@@ -514,7 +482,7 @@ async def _send_reopened_content(
     record: dict[str, Any],
     attachments: str = "",
 ) -> None:
-    """Envia o resumo e o historico completo paginado com setas."""
+    """Envia o resumo e o histórico completo paginado com setas."""
     for chunk in _discord_message_chunks(summary):
         await thread.send(chunk)
 
@@ -530,13 +498,25 @@ async def _send_reopened_content(
 
 def _historico_anterior_text(record: dict[str, Any]) -> str:
     log_url = record.get("log_url")
-    if log_url:
-        return f"**Histórico anterior:** {log_url}"
-    return "**Histórico anterior:** #logs"
+    return f"**Histórico anterior:** {log_url}" if log_url else "**Histórico anterior:** #logs"
 
 
 def _opened_at_text(record: dict[str, Any]) -> str:
     return f"**Chamado original aberto em:** {_format_created_at(_original_opened_at(record))}"
+
+
+def _display_sistema(record: dict[str, Any]) -> str:
+    if record.get("kind") == "contato":
+        return "Recuperador Contato"
+
+    sistema = record.get("sistema", "-")
+    thread_name = record.get("thread_name") or record.get("original_thread_name") or ""
+    parts = [part.strip() for part in thread_name.split(" - ")]
+    if len(parts) >= 2 and parts[0] == "1" and parts[1].startswith("Robôs/"):
+        return parts[1]
+    if sistema in {"Automações", "Automacoes"}:
+        return "Robôs/Planilhas"
+    return sistema
 
 
 def _build_embed(record: dict[str, Any]) -> discord.Embed:
@@ -547,8 +527,6 @@ def _build_embed(record: dict[str, Any]) -> discord.Embed:
         resumo = resumo[:897] + "..."
 
     sistema = _display_sistema(record)
-    if record.get("kind") == "contato":
-        sistema = "Recuperador Contato"
 
     log_url = record.get("log_url")
     historico = f"[#logs]({log_url})" if log_url else "#logs"
@@ -572,7 +550,7 @@ def _build_embed(record: dict[str, Any]) -> discord.Embed:
     if record.get("kind") == "sistemas" and sistema in {"E-mail", "Google Drive"}:
         linhas.extend(
             [
-                f"**Resumo:** Chamado ficou 8h sem interação.",
+                f"**Resumo:** Chamado ficou 24h sem interação.",
                 f"**E-mail selecionado:** {steps.get('dominio_detectado', '-')}",
                 f"**E-mail informado:** {steps.get('email_usuario', '-')}",
                 f"**Problema relatado:** {steps.get('problema', '-')}",
@@ -616,24 +594,24 @@ async def _delete_ephemeral_after(
         await interaction.delete_original_response()
         return
     except Exception as e:
-        print(f"[PENDENTES] Falha ao excluir resposta temporaria pela interacao: {e}")
+        print(f"[PENDENTES] Falha ao excluir resposta temporária pela interação: {e}")
 
     if message is not None:
         try:
             await message.delete()
         except Exception as e:
-            print(f"[PENDENTES] Falha ao excluir mensagem temporaria diretamente: {e}")
+            print(f"[PENDENTES] Falha ao excluir mensagem temporária diretamente: {e}")
 
 
 def _history_pages(record: dict[str, Any], *, max_chars: int = 1000) -> list[str]:
-    """Divide mensagens e anexos em paginas seguras para embeds do Discord."""
+    """Divide mensagens e anexos em páginas seguras para embeds do Discord."""
     entries = [
         _highlight_saved_history_author(str(line))
         for line in record.get("conversation_history") or []
         if str(line).strip()
     ]
     if not entries:
-        entries = ["Historico da conversa nao foi salvo para este card."]
+        entries = ["Histórico da conversa não foi salvo para este card."]
 
     arquivos = record.get("conversation_attachments") or []
     if arquivos:
@@ -647,10 +625,7 @@ def _history_pages(record: dict[str, Any], *, max_chars: int = 1000) -> list[str
     pages: list[str] = []
     current = ""
     for entry in entries:
-        parts = [
-            entry[index:index + max_chars]
-            for index in range(0, len(entry), max_chars)
-        ] or [""]
+        parts = [entry[index:index + max_chars] for index in range(0, len(entry), max_chars)] or [""]
         for part in parts:
             candidate = f"{current}\n{part}".strip() if current else part
             if current and len(candidate) > max_chars:
@@ -660,25 +635,21 @@ def _history_pages(record: dict[str, Any], *, max_chars: int = 1000) -> list[str
                 current = candidate
     if current:
         pages.append(current)
-    return pages or ["Historico vazio."]
+    return pages or ["Histórico vazio."]
 
 
-def _history_page_embed(
-    record: dict[str, Any],
-    pages: list[str],
-    index: int,
-) -> discord.Embed:
+def _history_page_embed(record: dict[str, Any], pages: list[str], index: int) -> discord.Embed:
     embed = discord.Embed(
-        title=f"Historico - {_display_sistema(record)}",
+        title=f"Histórico — {_display_sistema(record)}",
         description=pages[index],
         color=discord.Color.blurple(),
     )
-    embed.set_footer(text=f"Pagina {index + 1} de {len(pages)}")
+    embed.set_footer(text=f"Página {index + 1} de {len(pages)}")
     return embed
 
 
 class PendingHistoryView(discord.ui.View):
-    """Paginacao privada para historicos que nao cabem no card publico."""
+    """Paginação privada do histórico, sem alterar ou aumentar o card público."""
 
     def __init__(self, record: dict[str, Any], owner_id: int):
         super().__init__(timeout=120)
@@ -706,17 +677,13 @@ class PendingHistoryView(discord.ui.View):
         if interaction.user.id == self.owner_id:
             return True
         await interaction.response.send_message(
-            "Abra o historico pelo botao do card para navegar nas suas paginas.",
+            "Abra o histórico pelo botão do card para navegar nas suas próprias páginas.",
             ephemeral=True,
         )
         return False
 
     @discord.ui.button(label="◀ Anterior", style=discord.ButtonStyle.secondary)
-    async def previous_page(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ):
+    async def previous_page(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self._check_owner(interaction):
             return
         self.index = max(0, self.index - 1)
@@ -726,12 +693,8 @@ class PendingHistoryView(discord.ui.View):
             view=self,
         )
 
-    @discord.ui.button(label="Proxima ▶", style=discord.ButtonStyle.secondary)
-    async def next_page(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ):
+    @discord.ui.button(label="Próxima ▶", style=discord.ButtonStyle.secondary)
+    async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self._check_owner(interaction):
             return
         self.index = min(len(self.pages) - 1, self.index + 1)
@@ -786,7 +749,7 @@ class PendingChamadoView(discord.ui.View):
         expanded_record["history_visible"] = True
         expanded_embed = _build_embed(expanded_record)
 
-        # Mantem o historico dentro do card sempre que ele couber por inteiro.
+        # Mantém o comportamento antigo enquanto o card couber nos limites do Discord.
         if len(expanded_embed.description or "") <= 4096 and len(expanded_embed) <= 6000:
             record["history_visible"] = True
             pending[record_key] = record
@@ -797,7 +760,7 @@ class PendingChamadoView(discord.ui.View):
             )
             return
 
-        # Se ultrapassar o limite, abre o historico completo em paginas separadas.
+        # Históricos maiores são exibidos separadamente e paginados.
         pages_view = PendingHistoryView(record, interaction.user.id)
         await interaction.response.send_message(
             embed=_history_page_embed(record, pages_view.pages, 0),
@@ -809,7 +772,7 @@ class PendingChamadoView(discord.ui.View):
         except Exception:
             pass
         # O timeout da View reinicia ao clicar nas setas. Esta tarefa separada
-        # garante a exclusao 2 minutos apos a abertura, mesmo durante a navegacao.
+        # garante a exclusão 2 minutos após a abertura, mesmo durante a navegação.
         pages_view.delete_task = asyncio.create_task(
             _delete_ephemeral_after(
                 interaction,
@@ -941,19 +904,14 @@ class PendingChamadoView(discord.ui.View):
                     f"📌 **Chamado Reaberto**\n\n"
                     f"Olá {user_label}, estamos retomando seu chamado anterior.\n\n"
                     f"**Sistema:** {sistema}\n"
-                    f"**Motivo:** Chamado ficou 8h sem interação.\n"
+                    f"**Motivo:** Chamado ficou 24h sem interação.\n"
                     f"{_historico_anterior_text(record)}\n"
                     f"{_opened_at_text(record)}\n"
                     f"**E-mail selecionado:** {steps.get('dominio_detectado', '-')}\n"
                     f"**E-mail informado:** {steps.get('email_usuario', '-')}\n"
                     f"**Problema relatado:** {steps.get('problema', '-')}"
                 )
-                await _send_reopened_content(
-                    thread,
-                    summary,
-                    record,
-                    resume_attachments,
-                )
+                await _send_reopened_content(thread, summary, record, resume_attachments)
             else:
                 summary = (
                     f"📌 **Chamado Reaberto**\n\n"
@@ -963,12 +921,7 @@ class PendingChamadoView(discord.ui.View):
                     f"{_historico_anterior_text(record)}\n"
                     f"{_opened_at_text(record)}"
                 )
-                await _send_reopened_content(
-                    thread,
-                    summary,
-                    record,
-                    resume_attachments,
-                )
+                await _send_reopened_content(thread, summary, record, resume_attachments)
         elif record.get("kind") == "ti":
             nivel = "-"
             original_name = record.get("thread_name") or record.get("original_thread_name") or ""
@@ -978,36 +931,28 @@ class PendingChamadoView(discord.ui.View):
             summary = (
                 f"📌 **Chamado Reaberto**\n\n"
                 f"Olá {user_label}, estamos retomando seu chamado anterior.\n\n"
-                f"**Sistema:** {record.get('sistema', 'Equipamentos')}\n"
+                f"**Sistema:** {_display_sistema(record)}\n"
                 f"**Motivo:** {record.get('motivo') or 'Sem resumo registrado.'}\n"
                 f"**Nível de urgência:** {nivel}\n"
                 f"{_historico_anterior_text(record)}\n"
                 f"{_opened_at_text(record)}"
             )
-            await _send_reopened_content(
-                thread,
-                summary,
-                record,
-                resume_attachments,
-            )
+            await _send_reopened_content(thread, summary, record, resume_attachments)
         else:
             summary = (
                 f"Olá {user_label}, estamos retomando seu chamado anterior.\n\n"
                 f"Resumo:\n"
                 f"- Tipo: {record.get('tipo_label', 'Chamado')}\n"
-                f"- Sistema: {record.get('sistema', '-')}\n"
+                f"- Sistema: {_display_sistema(record)}\n"
                 f"- Motivo: {record.get('motivo') or 'Sem resumo registrado.'}\n"
                 f"- Histórico anterior: {record.get('log_url') or '#logs'}\n"
                 f"- Chamado original aberto em: {_format_created_at(_original_opened_at(record))}\n"
                 "O atendimento continua por aqui e sera concluido somente com o comando adequado."
             )
-            await _send_reopened_content(
-                thread,
-                summary,
-                record,
-                resume_attachments,
-            )
+            await _send_reopened_content(thread, summary, record, resume_attachments)
 
+        # O card registra a equipe responsável quando o chamado entra na fila.
+        # Ao retomá-lo, avisa essa mesma equipe na nova thread.
         responsavel_role_id = record.get("responsavel_role_id")
         if responsavel_role_id:
             await thread.send(
@@ -1114,7 +1059,7 @@ async def criar_card_pendente(
         "original_thread_name": thread.name,
         "thread_name": thread.name,
         "thread_url": getattr(thread, "jump_url", None),
-        "inativo_ha": "8h",
+        "inativo_ha": "24h",
         "original_opened_at": _thread_created_at_iso(thread),
         "created_at": datetime.datetime.utcnow().isoformat() + "Z",
         "payload": payload,

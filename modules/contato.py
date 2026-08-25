@@ -34,10 +34,6 @@ _THREAD_ACTIVITY: dict[int, dict] = {}
 _FINALIZADOS_FILE = Path("data/contatos_finalizados.json")
 _FINALIZADOS_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-# O Brasil não utiliza horário de verão atualmente. Usar o fuso fixo evita
-# depender do pacote tzdata nas instalações do bot no Windows.
-_SAO_PAULO_TIMEZONE = datetime.timezone(datetime.timedelta(hours=-3))
-
 # ── Referência ao bot (preenchida em setup) ───────────────────────────────────
 _bot: commands.Bot | None = None
 
@@ -87,86 +83,8 @@ def _validar_cpf(cpf: str) -> bool:
     return bool(_CPF_REGEX.match(cpf))
 
 
-def _as_utc(moment: datetime.datetime) -> datetime.datetime:
-    if moment.tzinfo is None:
-        return moment.replace(tzinfo=datetime.timezone.utc)
-    return moment.astimezone(datetime.timezone.utc)
-
-
-def _next_business_day_start(moment: datetime.datetime) -> datetime.datetime:
-    next_day = moment.date() + datetime.timedelta(days=1)
-    while next_day.weekday() >= 5:
-        next_day += datetime.timedelta(days=1)
-    return datetime.datetime.combine(
-        next_day,
-        datetime.time(config.CONTATO_BUSINESS_START_HOUR),
-        tzinfo=_SAO_PAULO_TIMEZONE,
-    )
-
-
-def _normalize_to_business_time(moment: datetime.datetime) -> datetime.datetime:
-    """Move um instante local para o primeiro horário comercial válido."""
-    start = moment.replace(
-        hour=config.CONTATO_BUSINESS_START_HOUR,
-        minute=0,
-        second=0,
-        microsecond=0,
-    )
-    end = moment.replace(
-        hour=config.CONTATO_BUSINESS_END_HOUR,
-        minute=0,
-        second=0,
-        microsecond=0,
-    )
-
-    if moment.weekday() >= 5:
-        while start.weekday() >= 5:
-            start += datetime.timedelta(days=1)
-        return start
-    if moment < start:
-        return start
-    if moment >= end:
-        return _next_business_day_start(moment)
-    return moment
-
-
-def _business_deadline(last_activity: datetime.datetime) -> datetime.datetime:
-    """Calcula o prazo somando somente horas comerciais de segunda a sexta."""
-    current = _normalize_to_business_time(
-        _as_utc(last_activity).astimezone(_SAO_PAULO_TIMEZONE)
-    )
-    remaining = datetime.timedelta(hours=config.CONTATO_INACTIVITY_BUSINESS_HOURS)
-
-    while remaining:
-        end = current.replace(
-            hour=config.CONTATO_BUSINESS_END_HOUR,
-            minute=0,
-            second=0,
-            microsecond=0,
-        )
-        available = end - current
-        if remaining <= available:
-            return current + remaining
-        remaining -= available
-        current = _next_business_day_start(current)
-
-    return current
-
-
-def _is_business_time(moment: datetime.datetime) -> bool:
-    local = moment.astimezone(_SAO_PAULO_TIMEZONE)
-    return (
-        local.weekday() < 5
-        and config.CONTATO_BUSINESS_START_HOUR
-        <= local.hour
-        < config.CONTATO_BUSINESS_END_HOUR
-    )
-
-
 def register_thread_activity(thread_id: int) -> None:
-    _THREAD_ACTIVITY[thread_id] = {
-        "last_activity": datetime.datetime.now(datetime.timezone.utc)
-    }
+    _THREAD_ACTIVITY[thread_id] = {"last_activity": datetime.datetime.utcnow()}
 
 
 def get_thread_activity(thread_id: int) -> datetime.datetime | None:
@@ -182,16 +100,12 @@ def get_thread_activity(thread_id: int) -> datetime.datetime | None:
 
 @tasks.loop(seconds=60)
 async def _verificar_inatividade():
-    agora = datetime.datetime.now(datetime.timezone.utc)
+    agora = datetime.datetime.utcnow()
     para_remover = []
 
-    # A mensagem nunca deve ser enviada fora do horário comercial.
-    if not _is_business_time(agora):
-        return
-
     for thread_id, info in list(_THREAD_ACTIVITY.items()):
-        prazo = _business_deadline(info["last_activity"])
-        if agora.astimezone(_SAO_PAULO_TIMEZONE) < prazo:
+        delta = (agora - info["last_activity"]).total_seconds()
+        if delta < config.CONTATO_INACTIVITY_TIMEOUT_SECONDS:
             continue
 
         thread = None
@@ -208,9 +122,7 @@ async def _verificar_inatividade():
 
         try:
             await thread.send(config.CONTATO_INACTIVITY_MESSAGE)
-            _THREAD_ACTIVITY[thread_id]["last_activity"] = datetime.datetime.now(
-                datetime.timezone.utc
-            )
+            _THREAD_ACTIVITY[thread_id]["last_activity"] = datetime.datetime.utcnow()
             print(f"[CONTATO] Mensagem de inatividade enviada na thread {thread_id}")
         except Exception as e:
             print(f"[CONTATO] Erro ao enviar inatividade na thread {thread_id}: {e}")
@@ -448,9 +360,7 @@ async def _criar_thread_contato(
 async def on_message_contato(message: discord.Message):
     """Chamado pelo on_message do main.py para atualizar o timer de inatividade."""
     if message.channel.id in _THREAD_ACTIVITY:
-        _THREAD_ACTIVITY[message.channel.id]["last_activity"] = datetime.datetime.now(
-            datetime.timezone.utc
-        )
+        _THREAD_ACTIVITY[message.channel.id]["last_activity"] = datetime.datetime.utcnow()
 
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
