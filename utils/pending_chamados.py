@@ -378,24 +378,99 @@ def _resume_history_line(raw_line: str) -> str | None:
     if text.startswith("@") and len(text.split()) <= 2:
         return None
 
-    if len(text) > 260:
-        text = text[:257] + "..."
-    return f"{author}: {text}"
+    author = discord.utils.escape_markdown(author, as_needed=True)
+    return f"**{author}:** {text}"
 
 
-def _resume_history_text(record: dict[str, Any], *, limit: int = 12) -> str:
+def _highlight_saved_history_author(raw_line: str) -> str:
+    """Destaca o nome do autor sem remover a data do historico completo."""
+    line = str(raw_line or "").strip()
+    match = re.match(r"^(\[[^\]]+\]\s*)([^:\n]{1,100}):\s*(.*)$", line, flags=re.DOTALL)
+    if not match:
+        return line
+
+    timestamp, author, text = match.groups()
+    author = discord.utils.escape_markdown(author.strip(), as_needed=True)
+    return f"{timestamp}**{author}:** {text.strip()}"
+
+
+def _resume_history_pages(record: dict[str, Any], *, max_chars: int = 500) -> list[str]:
+    """Monta todo o historico util da retomada em paginas seguras para embeds."""
     linhas = [
         clean
         for raw in (record.get("conversation_history") or [])
         if (clean := _resume_history_line(str(raw)))
     ]
     if not linhas:
-        return ""
+        return []
 
-    historico = "\n".join(linhas[-limit:])
-    if len(historico) > 1700:
-        historico = historico[-1697:] + "..."
-    return f"**Histórico do chamado anterior:**\n```text\n{historico}\n```"
+    pages: list[str] = []
+    current = ""
+    for linha in linhas:
+        parts = [
+            linha[index:index + max_chars]
+            for index in range(0, len(linha), max_chars)
+        ] or [""]
+        for part in parts:
+            candidate = f"{current}\n{part}" if current else part
+            if current and len(candidate) > max_chars:
+                pages.append(current)
+                current = part
+            else:
+                current = candidate
+    if current:
+        pages.append(current)
+    return pages
+
+
+def _resume_history_embed(pages: list[str], index: int) -> discord.Embed:
+    embed = discord.Embed(
+        title="Historico do chamado anterior",
+        description=pages[index],
+        color=discord.Color.blurple(),
+    )
+    embed.set_footer(text=f"Pagina {index + 1} de {len(pages)}")
+    return embed
+
+
+class ReopenedHistoryView(discord.ui.View):
+    """Setas publicas para navegar pelo historico dentro da thread retomada."""
+
+    def __init__(self, pages: list[str]):
+        super().__init__(timeout=3600)
+        self.pages = pages
+        self.index = 0
+        self._sync_buttons()
+
+    def _sync_buttons(self) -> None:
+        self.previous_page.disabled = self.index == 0
+        self.next_page.disabled = self.index >= len(self.pages) - 1
+
+    @discord.ui.button(label="◀ Anterior", style=discord.ButtonStyle.secondary)
+    async def previous_page(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        self.index = max(0, self.index - 1)
+        self._sync_buttons()
+        await interaction.response.edit_message(
+            embed=_resume_history_embed(self.pages, self.index),
+            view=self,
+        )
+
+    @discord.ui.button(label="Proxima ▶", style=discord.ButtonStyle.secondary)
+    async def next_page(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        self.index = min(len(self.pages) - 1, self.index + 1)
+        self._sync_buttons()
+        await interaction.response.edit_message(
+            embed=_resume_history_embed(self.pages, self.index),
+            view=self,
+        )
 
 
 def _resume_attachments_text(record: dict[str, Any], *, limit: int = 5) -> str:
@@ -436,22 +511,20 @@ def _discord_message_chunks(text: str, *, limit: int = 1900) -> list[str]:
 async def _send_reopened_content(
     thread: discord.Thread,
     summary: str,
-    history: str = "",
+    record: dict[str, Any],
     attachments: str = "",
 ) -> None:
-    """Mantem uma mensagem curta unida e divide apenas quando ultrapassa o limite."""
-    sections = [
-        section.strip()
-        for section in (summary, history, attachments)
-        if section.strip()
-    ]
-    combined = "\n\n".join(sections)
-    if len(combined) <= 1900:
-        await thread.send(combined)
-        return
+    """Envia o resumo e o historico completo paginado com setas."""
+    for chunk in _discord_message_chunks(summary):
+        await thread.send(chunk)
 
-    for section in sections:
-        for chunk in _discord_message_chunks(section):
+    pages = _resume_history_pages(record)
+    if pages:
+        view = ReopenedHistoryView(pages) if len(pages) > 1 else None
+        await thread.send(embed=_resume_history_embed(pages, 0), view=view)
+
+    if attachments.strip():
+        for chunk in _discord_message_chunks(attachments):
             await thread.send(chunk)
 
 
@@ -533,18 +606,29 @@ def _build_embed(record: dict[str, Any]) -> discord.Embed:
     )
 
 
-async def _delete_ephemeral_after(interaction: discord.Interaction, delay: int = 8) -> None:
+async def _delete_ephemeral_after(
+    interaction: discord.Interaction,
+    delay: int = 8,
+    message: discord.InteractionMessage | None = None,
+) -> None:
     await asyncio.sleep(delay)
     try:
         await interaction.delete_original_response()
-    except Exception:
-        pass
+        return
+    except Exception as e:
+        print(f"[PENDENTES] Falha ao excluir resposta temporaria pela interacao: {e}")
+
+    if message is not None:
+        try:
+            await message.delete()
+        except Exception as e:
+            print(f"[PENDENTES] Falha ao excluir mensagem temporaria diretamente: {e}")
 
 
-def _history_pages(record: dict[str, Any], *, max_chars: int = 3400) -> list[str]:
+def _history_pages(record: dict[str, Any], *, max_chars: int = 1000) -> list[str]:
     """Divide mensagens e anexos em paginas seguras para embeds do Discord."""
     entries = [
-        str(line).strip()
+        _highlight_saved_history_author(str(line))
         for line in record.get("conversation_history") or []
         if str(line).strip()
     ]
@@ -597,12 +681,22 @@ class PendingHistoryView(discord.ui.View):
     """Paginacao privada para historicos que nao cabem no card publico."""
 
     def __init__(self, record: dict[str, Any], owner_id: int):
-        super().__init__(timeout=300)
+        super().__init__(timeout=120)
         self.record = record
         self.owner_id = owner_id
         self.pages = _history_pages(record)
         self.index = 0
+        self.message: discord.InteractionMessage | None = None
+        self.delete_task: asyncio.Task[None] | None = None
         self._sync_buttons()
+
+    async def on_timeout(self) -> None:
+        if self.message is None:
+            return
+        try:
+            await self.message.delete()
+        except Exception:
+            pass
 
     def _sync_buttons(self) -> None:
         self.previous_page.disabled = self.index == 0
@@ -710,6 +804,19 @@ class PendingChamadoView(discord.ui.View):
             view=pages_view,
             ephemeral=True,
         )
+        try:
+            pages_view.message = await interaction.original_response()
+        except Exception:
+            pass
+        # O timeout da View reinicia ao clicar nas setas. Esta tarefa separada
+        # garante a exclusao 2 minutos apos a abertura, mesmo durante a navegacao.
+        pages_view.delete_task = asyncio.create_task(
+            _delete_ephemeral_after(
+                interaction,
+                delay=120,
+                message=pages_view.message,
+            )
+        )
 
     @discord.ui.button(
         label="Retomar Chamado",
@@ -805,7 +912,6 @@ class PendingChamadoView(discord.ui.View):
                 print(f"[PENDENTES] Erro ao restaurar atividade de contato: {e}")
 
         user_label = user.mention if user else record.get("user_name", "usuario")
-        resume_history = _resume_history_text(record)
         resume_attachments = _resume_attachments_text(record)
         if record.get("kind") == "contato":
             _, nome_contato, cpf_contato = _split_contato_motivo(record.get("motivo") or "")
@@ -824,7 +930,7 @@ class PendingChamadoView(discord.ui.View):
             await _send_reopened_content(
                 thread,
                 "\n".join(linhas),
-                resume_history,
+                record,
                 resume_attachments,
             )
         elif record.get("kind") == "sistemas":
@@ -845,7 +951,7 @@ class PendingChamadoView(discord.ui.View):
                 await _send_reopened_content(
                     thread,
                     summary,
-                    resume_history,
+                    record,
                     resume_attachments,
                 )
             else:
@@ -860,7 +966,7 @@ class PendingChamadoView(discord.ui.View):
                 await _send_reopened_content(
                     thread,
                     summary,
-                    resume_history,
+                    record,
                     resume_attachments,
                 )
         elif record.get("kind") == "ti":
@@ -881,7 +987,7 @@ class PendingChamadoView(discord.ui.View):
             await _send_reopened_content(
                 thread,
                 summary,
-                resume_history,
+                record,
                 resume_attachments,
             )
         else:
@@ -898,7 +1004,7 @@ class PendingChamadoView(discord.ui.View):
             await _send_reopened_content(
                 thread,
                 summary,
-                resume_history,
+                record,
                 resume_attachments,
             )
 
